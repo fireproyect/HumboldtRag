@@ -4,6 +4,7 @@ import pypdf
 import docx
 import pandas as pd
 from google import genai
+from google.genai import types
 from supabase import create_client
 from dotenv import load_dotenv
 
@@ -48,10 +49,11 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
             chunks.append(chunk)
 
     for i, chunk in enumerate(chunks):
-        # Generar embedding con el modelo estándar universal
+        # Generar embedding con el modelo actual y forzar 768 dimensiones
         embedding_response = gemini_client.models.embed_content(
-            model="text-embedding-004",
-            contents=chunk
+            model="gemini-embedding-001",
+            contents=chunk,
+            config=types.EmbedContentConfig(output_dimensionality=768)
         )
         vector = embedding_response.embeddings[0].values
 
@@ -67,10 +69,11 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
 
 # 3. Consulta (RAG): Buscar en Supabase y responder con Gemini
 def consultar_rag(pregunta_usuario: str):
-    # Generar vector de la pregunta
+    # Generar vector de la pregunta con el modelo actual
     embedding_response = gemini_client.models.embed_content(
-        model="text-embedding-004",
-        contents=pregunta_usuario
+        model="gemini-embedding-001",
+        contents=pregunta_usuario,
+        config=types.EmbedContentConfig(output_dimensionality=768)
     )
     vector_pregunta = embedding_response.embeddings[0].values
 
