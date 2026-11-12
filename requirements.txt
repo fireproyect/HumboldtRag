@@ -8,3 +8,4 @@ pypdf
 python-docx
 pandas
 openpyxl
+python-multipart
