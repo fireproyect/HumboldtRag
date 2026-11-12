@@ -103,9 +103,9 @@ def consultar_rag(pregunta_usuario: str):
     {pregunta_usuario}
     """
 
-    # Cambiado a gemini-1.5-pro para garantizar alta disponibilidad y estabilidad
+    # Usar gemini-3.6-flash para la generación de la respuesta
     response = gemini_client.models.generate_content(
-        model="gemini-1.5-pro",
+        model="gemini-3.6-flash",
         contents=prompt_final
     )
 
