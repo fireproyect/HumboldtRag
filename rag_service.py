@@ -49,7 +49,7 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
             chunks.append(chunk)
 
     for i, chunk in enumerate(chunks):
-        # Generar embedding
+        # Generar embedding con 768 dimensiones
         embedding_response = gemini_client.models.embed_content(
             model="gemini-embedding-001",
             contents=chunk,
@@ -103,9 +103,9 @@ def consultar_rag(pregunta_usuario: str):
     {pregunta_usuario}
     """
 
-    # Usar el modelo actual gemini-2.5-flash
+    # Usar el modelo actual recomendado gemini-3.8-flash
     response = gemini_client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         contents=prompt_final
     )
 
