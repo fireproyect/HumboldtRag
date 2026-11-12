@@ -48,7 +48,7 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
             chunks.append(chunk)
 
     for i, chunk in enumerate(chunks):
-        # Generar embedding con Gemini
+        # Generar embedding con el modelo estándar universal
         embedding_response = gemini_client.models.embed_content(
             model="text-embedding-004",
             contents=chunk
