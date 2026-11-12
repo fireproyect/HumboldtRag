@@ -48,13 +48,12 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
             chunks.append(chunk)
 
     for i, chunk in enumerate(chunks):
-        # Generar embedding con Gemini (text-embedding-004 genera 768 dimensiones)
-        # Generar embedding
-        embedding_result = gemini_client.models.embed_content(
+        # Generar embedding con Gemini
+        embedding_response = gemini_client.models.embed_content(
             model="text-embedding-004",
-            contents=texto_a_vectorizar
+            contents=chunk
         )
-        vector = embedding_result.embedding[0].values # O .values según el objeto
+        vector = embedding_response.embeddings[0].values
 
         # Insertar en Supabase
         data = {
@@ -69,12 +68,11 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
 # 3. Consulta (RAG): Buscar en Supabase y responder con Gemini
 def consultar_rag(pregunta_usuario: str):
     # Generar vector de la pregunta
-    # Generar embedding
-    embedding_result = gemini_client.models.embed_content(
+    embedding_response = gemini_client.models.embed_content(
         model="text-embedding-004",
-        contents=texto_a_vectorizar
+        contents=pregunta_usuario
     )
-    vector = embedding_result.embedding[0].values # O .values según el objeto
+    vector_pregunta = embedding_response.embeddings[0].values
 
     # Buscar fragmentos similares en Supabase usando la función RPC
     respuesta_db = supabase.rpc(
