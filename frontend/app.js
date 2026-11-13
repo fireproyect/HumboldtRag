@@ -1,4 +1,5 @@
-const API_URL = "https://humboldtrag.onrender.com";
+// URL pública de tu backend desplegado en Render
+const API_URL = "https://humboldtrag.onrender.com"; 
 
 // Lógica de la Vista de Usuario (Chat)
 const chatForm = document.getElementById("chat-form");
@@ -15,7 +16,7 @@ if (chatForm) {
         const loadingId = appendMessage("Pensando...", "bot");
 
         try {
-            const res = await fetch(`${API_URL}/api/chat`, {
+            const res = await fetch(`${API_URL}/chat`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ pregunta })
@@ -69,7 +70,7 @@ if (uploadForm) {
 
         status.textContent = "Subiendo e indexando multimodalmente...";
         try {
-            const res = await fetch(`${API_URL}/api/admin/subir`, {
+            const res = await fetch(`${API_URL}/admin/subir`, {
                 method: "POST",
                 body: formData
             });
@@ -87,7 +88,7 @@ if (uploadForm) {
 
 async function cargarEstadisticas() {
     try {
-        const res = await fetch(`${API_URL}/api/admin/documentos/conteo`);
+        const res = await fetch(`${API_URL}/admin/documentos/conteo`);
         const data = await res.json();
         
         document.getElementById("stat-files").textContent = data.total_archivos_subidos;
@@ -114,7 +115,7 @@ async function cargarEstadisticas() {
 async function eliminarArchivo(nombre) {
     if (!confirm(`¿Eliminar ${nombre}?`)) return;
     try {
-        await fetch(`${API_URL}/api/admin/documentos/${encodeURIComponent(nombre)}`, { method: "DELETE" });
+        await fetch(`${API_URL}/admin/documentos/${encodeURIComponent(nombre)}`, { method: "DELETE" });
         cargarEstadisticas();
     } catch (err) {
         alert("Error al eliminar.");
