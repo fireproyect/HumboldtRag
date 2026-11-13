@@ -10,11 +10,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Inicializar clientes oficiales
+# Inicializar clientes oficiales con la SDK moderna google-genai
 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
 
-# 1. Función para extraer texto de documentos tradicionales
+# Función auxiliar para extraer texto de documentos tradicionales (PDF, DOCX, XLSX)
 def extraer_texto_de_archivo(ruta_archivo: str) -> str:
     extension = ruta_archivo.lower().split('.')[-1]
     texto_extraido = ""
@@ -35,28 +35,29 @@ def extraer_texto_de_archivo(ruta_archivo: str) -> str:
 
     return texto_extraido
 
-# 2. Ingesta Multimodal: Ahora extrae texto de imágenes automáticamente al subirlas
+# Ingesta Híbrida y Multimodal (Maneja texto, PDFs, Excel, Word e Imágenes)
 def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
     extension = ruta_archivo.lower().split('.')[-1]
     
+    # CASO A: Si es una imagen, aplicamos la estrategia multimodal e híbrida
     if extension in ["png", "jpg", "jpeg"]:
-        # Subir archivo al servidor de Google para procesamiento multimodal
+        # 1. Subir archivo nativamente a la API de Gemini
         archivo_subido = gemini_client.files.upload(file=ruta_archivo)
         
-        # Opcional pero potente: usar gemini-3.5-flash-lite para "leer" y transcribir el contenido de la imagen (como el RIF)
+        # 2. Extracción de texto automático (OCR/Visión) usando gemini-3.5-flash-lite para capturar datos exactos (RIF, cédulas, etc.)
         try:
             analisis_imagen = gemini_client.models.generate_content(
                 model="gemini-3.5-flash-lite",
                 contents=[
                     archivo_subido, 
-                    "Extrae y transcribe absolutamente todo el texto visible en esta imagen, incluyendo números de RIF, rif, cédulas, nombres, direcciones y cualquier dato relevante."
+                    "Extrae y transcribe absolutamente todo el texto visible en esta imagen, incluyendo números de RIF, rif, cédulas, nombres, direcciones y cualquier dato institucional relevante."
                 ]
             )
             texto_imagen = analisis_imagen.text
         except Exception:
             texto_imagen = "No se pudo extraer texto automático de la imagen."
 
-        # Generar embedding multimodal con gemini-embedding-2
+        # 3. Generación del embedding multimodal unificado usando el modelo moderno gemini-embedding-2
         embedding_response = gemini_client.models.embed_content(
             model="gemini-embedding-2",
             contents=archivo_subido,
@@ -64,7 +65,7 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
         )
         vector = embedding_response.embeddings[0].values
 
-        # Guardar en Supabase integrando el texto extraído para que la búsqueda vectorial lo encuentre
+        # 4. Consolidar el contenido combinando la fuente, la etiqueta y la transcripción textual
         contenido_completo = f"[Documento Multimedia/Imagen Fuente: {nombre_original}]\nContenido extraído de la imagen:\n{texto_imagen}"
         
         data = {
@@ -74,11 +75,13 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
         }
         supabase.table("documents").insert(data).execute()
         
-        return 1
+        return 1 # Retorna 1 unidad atómica vectorizada
 
+    # CASO B: Documentos de texto tradicionales (PDF, Word, Excel)
     else:
         texto_completo = extraer_texto_de_archivo(ruta_archivo)
         
+        # Chunking inteligente (bloques de 1000 caracteres con 200 de solapamiento)
         tamano_chunk = 1000
         solapamiento = 200
         chunks = []
@@ -90,6 +93,7 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
         for i, chunk in enumerate(chunks):
             chunk_con_fuente = f"[Documento Fuente: {nombre_original}]\n{chunk}"
 
+            # Vectorización del chunk con gemini-embedding-2
             embedding_response = gemini_client.models.embed_content(
                 model="gemini-embedding-2",
                 contents=chunk_con_fuente,
@@ -106,8 +110,9 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
 
         return len(chunks)
 
-# 3. Consulta RAG con inventario y contexto
+# Consulta RAG con inventario global, búsqueda semántica y generación de respuesta
 def consultar_rag(pregunta_usuario: str):
+    # 1. Obtener el inventario global de archivos únicos directamente de Supabase
     try:
         response_meta = supabase.table("documents").select("metadata").execute()
         archivos_unicos = set()
@@ -119,7 +124,7 @@ def consultar_rag(pregunta_usuario: str):
     except Exception:
         inventario_archivos = []
 
-    # Generar vector de la pregunta con gemini-embedding-2
+    # 2. Vectorizar la pregunta del usuario utilizando gemini-embedding-2
     embedding_response = gemini_client.models.embed_content(
         model="gemini-embedding-2",
         contents=pregunta_usuario,
@@ -127,12 +132,12 @@ def consultar_rag(pregunta_usuario: str):
     )
     vector_pregunta = embedding_response.embeddings[0].values
 
-    # Buscar fragmentos similares en Supabase
+    # 3. Búsqueda semántica por similitud vectorial usando la función RPC match_documents en Supabase
     respuesta_db = supabase.rpc(
         "match_documents",
         {
             "query_embedding": vector_pregunta,
-            "match_threshold": 0.3, # Umbral ligeramente más flexible para capturar coincidencias visuales
+            "match_threshold": 0.3, # Umbral optimizado para capturar similitudes semánticas e imágenes
             "match_count": 4
         }
     ).execute()
@@ -140,22 +145,23 @@ def consultar_rag(pregunta_usuario: str):
     fragmentos = respuesta_db.data
     contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante."
 
+    # 4. Prompt institucional con restricciones estrictas y contexto enriquecido
     prompt_final = f"""
     Eres un asistente institucional experto. Responde a la pregunta del usuario utilizando EXCLUSIVAMENTE 
     la información provista en el contexto y en el inventario de archivos. Si la respuesta no está allí, di amablemente 
-    que no posees esa información. Si te preguntan por datos específicos (como números de RIF, cédulas o nombres) 
-    busca detalladamente en el contexto provisto por los documentos e imágenes.
+    que no posees esa información. Si te preguntan por archivos disponibles, revisa el inventario. Si te preguntan por datos específicos (como números de RIF, cédulas o nombres), búscalos detalladamente en el contexto.
 
     [INVENTARIO DE ARCHIVOS DISPONIBLES EN EL SISTEMA]:
     {inventario_archivos}
 
-    [CONTEXTO DE FRAGMENTOS RECUPERADOS]:
+    [CONTEXTO DE FRAGMENTOS Y REGISTROS RECUPERADOS]:
     {contexto}
 
     [PREGUNTA]:
     {pregunta_usuario}
     """
 
+    # 5. Generación de la respuesta final con gemini-3.5-flash-lite (baja latencia)
     response = gemini_client.models.generate_content(
         model="gemini-3.5-flash-lite",
         contents=prompt_final
@@ -166,6 +172,6 @@ def consultar_rag(pregunta_usuario: str):
         "fuentes": list(set([item["metadata"]["fuente"] for item in fragmentos])) if fragmentos else []
     }
 
-# 4. Eliminar archivo de la base de datos
+# Función para eliminar todos los registros asociados a un archivo fuente
 def eliminar_documento_por_fuente(nombre_archivo: str):
     supabase.table("documents").delete().eq("metadata->>fuente", nombre_archivo).execute()
