@@ -35,10 +35,10 @@ def extraer_texto_de_archivo(ruta_archivo: str) -> str:
     return texto_extraido
 
 def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
-    """Procesa documentos de texto o imágenes multimodales, generando embeddings y guardando en Supabase."""
+    """Procesa documentos de texto o imágenes multimodales, generando embeddings unificados y guardando en Supabase."""
     extension = ruta_archivo.lower().split('.')[-1]
     
-    # 1. Procesamiento para Imágenes (Multimodal con OCR automático)
+    # 1. Procesamiento para Imágenes (Multimodal con OCR y unificación vectorial de texto)
     if extension in ["png", "jpg", "jpeg"]:
         archivo_subido = gemini_client.files.upload(file=ruta_archivo)
         try:
@@ -53,15 +53,15 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
         except Exception:
             texto_imagen = "No se pudo extraer texto automático de la imagen."
 
-        # Generar embedding vectorial de 768 dimensiones para la imagen
+        contenido_completo = f"[Documento Multimedia/Imagen Fuente: {nombre_original}]\nContenido extraído:\n{texto_imagen}"
+
+        # CLAVE: Generar el embedding vectorial a partir del texto extraído para unificarlo con el espacio de texto
         embedding_response = gemini_client.models.embed_content(
             model="gemini-embedding-2",
-            contents=archivo_subido,
+            contents=contenido_completo,
             config=types.EmbedContentConfig(output_dimensionality=768)
         )
         vector = embedding_response.embeddings[0].values
-
-        contenido_completo = f"[Documento Multimedia/Imagen Fuente: {nombre_original}]\nContenido extraído:\n{texto_imagen}"
         
         data = {
             "content": contenido_completo,
@@ -103,9 +103,9 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
         return len(chunks)
 
 def consultar_rag(pregunta: str) -> dict:
-    """Realiza la recuperación vectorial en Supabase y genera la respuesta contextual con Gemini."""
+    """Realiza la recuperación vectorial unificada en Supabase y genera la respuesta contextual con Gemini."""
     try:
-        # Obtener inventario general de archivos disponibles en la base de conocimiento
+        # Obtener inventario general de archivos disponibles
         response_meta = supabase.table("documents").select("metadata").execute()
         archivos_unicos = set()
         for doc in response_meta.data:
@@ -122,23 +122,23 @@ def consultar_rag(pregunta: str) -> dict:
         )
         vector_pregunta = embedding_response.embeddings[0].values
 
-        # Búsqueda por similitud en Supabase (pgvector) con umbral ampliado y mayor capacidad
+        # Búsqueda por similitud en Supabase con umbral flexible y buen match_count
         respuesta_db = supabase.rpc(
             "match_documents",
             {
                 "query_embedding": vector_pregunta,
-                "match_threshold": 0.15,  # Umbral más amplio para capturar imágenes junto con textos
-                "match_count": 8          # Mayor capacidad de contexto recuperado
+                "match_threshold": 0.15,
+                "match_count": 8
             }
         ).execute()
 
         fragmentos = respuesta_db.data
         contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante."
 
-        # Prompt optimizado para equilibrar documentos de texto e imágenes
+        # Prompt optimizado para coexistencia multimodal
         prompt_final = f"""
         Eres un asistente institucional experto para el Trabajo de Grado de la Universidad Alejandro de Humboldt. 
-        Analiza detalladamente todo el contexto recuperado, el cual puede contener fragmentos de documentos de texto (PDF, Word, Excel) así como transcripciones de imágenes/multimedia.
+        Analiza detalladamente todo el contexto recuperado, el cual contiene fragmentos de documentos de texto (PDF, Word, Excel) y transcripciones de imágenes/multimedia.
 
         [INVENTARIO GENERAL DE ARCHIVOS EN EL SISTEMA]:
         {inventario_archivos}
@@ -149,7 +149,7 @@ def consultar_rag(pregunta: str) -> dict:
         [PREGUNTA DEL USUARIO]:
         {pregunta}
 
-        Instrucción crítica: Si la pregunta menciona una imagen, cédula, RIF o archivo multimedia presente en el inventario, busca su contenido extraído dentro del contexto recuperado y respóndela con precisión, incluso si hay documentos de texto mezclados.
+        Instrucción crítica: Si la pregunta menciona una imagen, cédula, RIF o archivo multimedia presente en el inventario, busca su contenido extraído dentro del contexto recuperado y respóndela con absoluta precisión, integrándola con los datos de los textos si es necesario.
         """
 
         response = gemini_client.models.generate_content(
@@ -170,4 +170,3 @@ def eliminar_documento_por_fuente(nombre_archivo: str):
         supabase.table("documents").delete().eq("metadata->>fuente", nombre_archivo).execute()
     except Exception as e:
         raise Exception(f"Error al eliminar el documento en Supabase: {str(e)}")
-            
