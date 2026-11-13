@@ -39,12 +39,9 @@ def extraer_texto_de_archivo(ruta_archivo: str) -> str:
 def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
     extension = ruta_archivo.lower().split('.')[-1]
     
-    # Si es una imagen, utilizamos la subida nativa de archivos al cliente de Google para embeddings multimodales
     if extension in ["png", "jpg", "jpeg"]:
-        # Subir archivo multimedia al servidor de la API de Google temporalmente para embedding
         archivo_subido = gemini_client.files.upload(file=ruta_archivo)
         
-        # Generar embedding multimodal con gemini-embedding-2 pasándole la referencia del archivo multimedia
         embedding_response = gemini_client.models.embed_content(
             model="gemini-embedding-2",
             contents=archivo_subido,
@@ -52,7 +49,6 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
         )
         vector = embedding_response.embeddings[0].values
 
-        # Guardar en Supabase indicando que es contenido visual/multimodal
         data = {
             "content": f"[Documento Multimedia/Imagen Fuente: {nombre_original}]",
             "metadata": {"fuente": nombre_original, "tipo": "imagen"},
@@ -60,10 +56,8 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
         }
         supabase.table("documents").insert(data).execute()
         
-        return 1 # Retorna 1 elemento indexado (la imagen completa)
-
+        return 1
     else:
-        # Procesamiento normal basado en texto / chunks para PDF, DOCX, XLSX
         texto_completo = extraer_texto_de_archivo(ruta_archivo)
         
         tamano_chunk = 1000
@@ -93,8 +87,20 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
 
         return len(chunks)
 
-# 3. Consulta RAG optimizada con gemini-3.5-flash-lite
+# 3. Consulta RAG con inventario de archivos integrado para el modelo
 def consultar_rag(pregunta_usuario: str):
+    # Obtener el inventario completo de archivos únicos desde Supabase para dárselo a Gemini
+    try:
+        response_meta = supabase.table("documents").select("metadata").execute()
+        archivos_unicos = set()
+        for doc in response_meta.data:
+            meta = doc.get("metadata", {})
+            if "fuente" in meta:
+                archivos_unicos.add(meta["fuente"])
+        inventario_archivos = list(archivos_unicos)
+    except Exception:
+        inventario_archivos = []
+
     # Generar vector de la pregunta usando gemini-embedding-2
     embedding_response = gemini_client.models.embed_content(
         model="gemini-embedding-2",
@@ -116,13 +122,15 @@ def consultar_rag(pregunta_usuario: str):
     fragmentos = respuesta_db.data
     contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante."
 
+    # Prompt institucional mejorado con el inventario global de archivos
     prompt_final = f"""
     Eres un asistente institucional experto. Responde a la pregunta del usuario utilizando EXCLUSIVAMENTE 
-    la información provista en el contexto. Si la respuesta no está en el contexto, di amablemente 
-    que no posees esa información. Si el usuario te pregunta por el archivo o la fuente, indícalo basándote 
-    en las etiquetas de origen presentes en el contexto.
+    la información provista en el contexto y en la lista de archivos disponibles. Si la respuesta no está en el contexto ni en el inventario, di amablemente que no posees esa información.
 
-    [CONTEXTO]:
+    [INVENTARIO DE ARCHIVOS DISPONIBLES EN EL SISTEMA]:
+    {inventario_archivos}
+
+    [CONTEXTO DE FRAGMENTOS RECUPERADOS]:
     {contexto}
 
     [PREGUNTA]:
