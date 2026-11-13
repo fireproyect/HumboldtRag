@@ -35,13 +35,28 @@ def extraer_texto_de_archivo(ruta_archivo: str) -> str:
 
     return texto_extraido
 
-# 2. Ingesta Multimodal: Maneja texto, PDFs, Excel, Word e Imágenes
+# 2. Ingesta Multimodal: Ahora extrae texto de imágenes automáticamente al subirlas
 def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
     extension = ruta_archivo.lower().split('.')[-1]
     
     if extension in ["png", "jpg", "jpeg"]:
+        # Subir archivo al servidor de Google para procesamiento multimodal
         archivo_subido = gemini_client.files.upload(file=ruta_archivo)
         
+        # Opcional pero potente: usar gemini-3.5-flash-lite para "leer" y transcribir el contenido de la imagen (como el RIF)
+        try:
+            analisis_imagen = gemini_client.models.generate_content(
+                model="gemini-3.5-flash-lite",
+                contents=[
+                    archivo_subido, 
+                    "Extrae y transcribe absolutamente todo el texto visible en esta imagen, incluyendo números de RIF, rif, cédulas, nombres, direcciones y cualquier dato relevante."
+                ]
+            )
+            texto_imagen = analisis_imagen.text
+        except Exception:
+            texto_imagen = "No se pudo extraer texto automático de la imagen."
+
+        # Generar embedding multimodal con gemini-embedding-2
         embedding_response = gemini_client.models.embed_content(
             model="gemini-embedding-2",
             contents=archivo_subido,
@@ -49,14 +64,18 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
         )
         vector = embedding_response.embeddings[0].values
 
+        # Guardar en Supabase integrando el texto extraído para que la búsqueda vectorial lo encuentre
+        contenido_completo = f"[Documento Multimedia/Imagen Fuente: {nombre_original}]\nContenido extraído de la imagen:\n{texto_imagen}"
+        
         data = {
-            "content": f"[Documento Multimedia/Imagen Fuente: {nombre_original}]",
+            "content": contenido_completo,
             "metadata": {"fuente": nombre_original, "tipo": "imagen"},
             "embedding": vector
         }
         supabase.table("documents").insert(data).execute()
         
         return 1
+
     else:
         texto_completo = extraer_texto_de_archivo(ruta_archivo)
         
@@ -87,9 +106,8 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
 
         return len(chunks)
 
-# 3. Consulta RAG con inventario de archivos integrado para el modelo
+# 3. Consulta RAG con inventario y contexto
 def consultar_rag(pregunta_usuario: str):
-    # Obtener el inventario completo de archivos únicos desde Supabase para dárselo a Gemini
     try:
         response_meta = supabase.table("documents").select("metadata").execute()
         archivos_unicos = set()
@@ -101,7 +119,7 @@ def consultar_rag(pregunta_usuario: str):
     except Exception:
         inventario_archivos = []
 
-    # Generar vector de la pregunta usando gemini-embedding-2
+    # Generar vector de la pregunta con gemini-embedding-2
     embedding_response = gemini_client.models.embed_content(
         model="gemini-embedding-2",
         contents=pregunta_usuario,
@@ -114,18 +132,19 @@ def consultar_rag(pregunta_usuario: str):
         "match_documents",
         {
             "query_embedding": vector_pregunta,
-            "match_threshold": 0.4,
-            "match_count": 3
+            "match_threshold": 0.3, # Umbral ligeramente más flexible para capturar coincidencias visuales
+            "match_count": 4
         }
     ).execute()
 
     fragmentos = respuesta_db.data
     contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante."
 
-    # Prompt institucional mejorado con el inventario global de archivos
     prompt_final = f"""
     Eres un asistente institucional experto. Responde a la pregunta del usuario utilizando EXCLUSIVAMENTE 
-    la información provista en el contexto y en la lista de archivos disponibles. Si la respuesta no está en el contexto ni en el inventario, di amablemente que no posees esa información.
+    la información provista en el contexto y en el inventario de archivos. Si la respuesta no está allí, di amablemente 
+    que no posees esa información. Si te preguntan por datos específicos (como números de RIF, cédulas o nombres) 
+    busca detalladamente en el contexto provisto por los documentos e imágenes.
 
     [INVENTARIO DE ARCHIVOS DISPONIBLES EN EL SISTEMA]:
     {inventario_archivos}
