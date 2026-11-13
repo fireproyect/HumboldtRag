@@ -14,7 +14,7 @@ load_dotenv()
 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
 
-# 1. Función para extraer texto de diferentes formatos
+# 1. Función para extraer texto de documentos tradicionales
 def extraer_texto_de_archivo(ruta_archivo: str) -> str:
     extension = ruta_archivo.lower().split('.')[-1]
     texto_extraido = ""
@@ -31,46 +31,69 @@ def extraer_texto_de_archivo(ruta_archivo: str) -> str:
         df = pd.read_excel(ruta_archivo)
         texto_extraido = df.to_string(index=False)
     else:
-        raise ValueError(f"Formato .{extension} no compatible.")
+        raise ValueError(f"Formato .{extension} no compatible para extracción de texto directo.")
 
     return texto_extraido
 
-# 2. Ingesta: Fragmentar, integrar el nombre del archivo, vectorizar con gemini-embedding-2 y guardar
+# 2. Ingesta Multimodal: Maneja texto, PDFs, Excel, Word e Imágenes
 def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
-    texto_completo = extraer_texto_de_archivo(ruta_archivo)
+    extension = ruta_archivo.lower().split('.')[-1]
     
-    # Chunking inteligente (bloques de 1000 caracteres con 200 de solapamiento)
-    tamano_chunk = 1000
-    solapamiento = 200
-    chunks = []
-    for i in range(0, len(texto_completo), tamano_chunk - solapamiento):
-        chunk = texto_completo[i:i + tamano_chunk]
-        if chunk.strip():
-            chunks.append(chunk)
-
-    for i, chunk in enumerate(chunks):
-        # Integrar la fuente explícitamente para que el modelo la reconozca al consultar
-        chunk_con_fuente = f"[Documento Fuente: {nombre_original}]\n{chunk}"
-
-        # Generar embedding utilizando el modelo multimodal gemini-embedding-2
+    # Si es una imagen, utilizamos la subida nativa de archivos al cliente de Google para embeddings multimodales
+    if extension in ["png", "jpg", "jpeg"]:
+        # Subir archivo multimedia al servidor de la API de Google temporalmente para embedding
+        archivo_subido = gemini_client.files.upload(file=ruta_archivo)
+        
+        # Generar embedding multimodal con gemini-embedding-2 pasándole la referencia del archivo multimedia
         embedding_response = gemini_client.models.embed_content(
             model="gemini-embedding-2",
-            contents=chunk_con_fuente,
+            contents=archivo_subido,
             config=types.EmbedContentConfig(output_dimensionality=768)
         )
         vector = embedding_response.embeddings[0].values
 
-        # Insertar en Supabase
+        # Guardar en Supabase indicando que es contenido visual/multimodal
         data = {
-            "content": chunk_con_fuente,
-            "metadata": {"fuente": nombre_original, "fragmento": i},
+            "content": f"[Documento Multimedia/Imagen Fuente: {nombre_original}]",
+            "metadata": {"fuente": nombre_original, "tipo": "imagen"},
             "embedding": vector
         }
         supabase.table("documents").insert(data).execute()
+        
+        return 1 # Retorna 1 elemento indexado (la imagen completa)
 
-    return len(chunks)
+    else:
+        # Procesamiento normal basado en texto / chunks para PDF, DOCX, XLSX
+        texto_completo = extraer_texto_de_archivo(ruta_archivo)
+        
+        tamano_chunk = 1000
+        solapamiento = 200
+        chunks = []
+        for i in range(0, len(texto_completo), tamano_chunk - solapamiento):
+            chunk = texto_completo[i:i + tamano_chunk]
+            if chunk.strip():
+                chunks.append(chunk)
 
-# 3. Consulta (RAG): Buscar en Supabase y responder con gemini-3.5-flash-lite
+        for i, chunk in enumerate(chunks):
+            chunk_con_fuente = f"[Documento Fuente: {nombre_original}]\n{chunk}"
+
+            embedding_response = gemini_client.models.embed_content(
+                model="gemini-embedding-2",
+                contents=chunk_con_fuente,
+                config=types.EmbedContentConfig(output_dimensionality=768)
+            )
+            vector = embedding_response.embeddings[0].values
+
+            data = {
+                "content": chunk_con_fuente,
+                "metadata": {"fuente": nombre_original, "fragmento": i, "tipo": "texto"},
+                "embedding": vector
+            }
+            supabase.table("documents").insert(data).execute()
+
+        return len(chunks)
+
+# 3. Consulta RAG optimizada con gemini-3.5-flash-lite
 def consultar_rag(pregunta_usuario: str):
     # Generar vector de la pregunta usando gemini-embedding-2
     embedding_response = gemini_client.models.embed_content(
@@ -80,7 +103,7 @@ def consultar_rag(pregunta_usuario: str):
     )
     vector_pregunta = embedding_response.embeddings[0].values
 
-    # Buscar fragmentos similares en Supabase usando la función RPC
+    # Buscar fragmentos similares en Supabase
     respuesta_db = supabase.rpc(
         "match_documents",
         {
@@ -93,12 +116,11 @@ def consultar_rag(pregunta_usuario: str):
     fragmentos = respuesta_db.data
     contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante."
 
-    # Prompt con restricciones institucionales
     prompt_final = f"""
     Eres un asistente institucional experto. Responde a la pregunta del usuario utilizando EXCLUSIVAMENTE 
     la información provista en el contexto. Si la respuesta no está en el contexto, di amablemente 
     que no posees esa información. Si el usuario te pregunta por el archivo o la fuente, indícalo basándote 
-    en las etiquetas [Documento Fuente: ...] presentes en el contexto.
+    en las etiquetas de origen presentes en el contexto.
 
     [CONTEXTO]:
     {contexto}
@@ -107,7 +129,6 @@ def consultar_rag(pregunta_usuario: str):
     {pregunta_usuario}
     """
 
-    # Usar gemini-3.5-flash-lite para una generación rápida y de baja latencia
     response = gemini_client.models.generate_content(
         model="gemini-3.5-flash-lite",
         contents=prompt_final
