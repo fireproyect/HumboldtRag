@@ -1,29 +1,414 @@
-* { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-body { background-color: #f4f6f9; color: #333; height: 100vh; display: flex; flex-direction: column; }
-.header-nav { background: #1e293b; color: white; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; }
-.nav-link { color: #38bdf8; text-decoration: none; font-weight: 600; }
-.nav-link:hover { text-decoration: underline; }
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
 
-/* Usuario Chat */
-.user-container { max-width: 800px; margin: 20px auto; width: 100%; display: flex; flex-direction: column; height: calc(100vh - 40px); background: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); overflow: hidden; }
-.chat-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
-.message { display: flex; margin-bottom: 10px; }
-.message.bot { justify-content: flex-start; }
-.message.user { justify-content: flex-end; }
-.msg-content { max-width: 75%; padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.4; }
-.message.bot .msg-content { background: #e2e8f0; color: #1e293b; }
-.message.user .msg-content { background: #2563eb; color: white; }
-.chat-form { display: flex; padding: 15px; background: #f8fafc; border-top: 1px solid #e2e8f0; gap: 10px; }
-.chat-form input { flex: 1; padding: 10px 15px; border: 1px solid #cbd5e1; border-radius: 6px; outline: none; }
-.chat-form button { padding: 10px 20px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+body {
+    background-color: #f1f5f9;
+    color: #1e293b;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
 
-/* Administrador Panel */
-.admin-container { max-width: 900px; margin: 20px auto; width: 100%; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-.stats-row { display: flex; gap: 20px; margin: 20px 0; }
-.stat-card { background: #f8fafc; border: 1px solid #e2e8f0; padding: 20px; border-radius: 8px; flex: 1; text-align: center; }
-.stat-card span { font-size: 28px; font-weight: bold; color: #2563eb; display: block; }
-.upload-box, .inventory-box { margin-top: 25px; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; }
-.upload-box form { display: flex; gap: 15px; margin-top: 10px; align-items: center; }
-.inv-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-ul { list-style: none; }
-ul li { padding: 10px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; }
+body.chat-page {
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Header Institucional UAH */
+header {
+    background-color: #1e3a8a;
+    color: white;
+    padding: 14px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.12);
+    gap: 12px;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+header h1 {
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+header a {
+    color: #93c5fd;
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+header a:hover {
+    text-decoration: underline;
+}
+
+/* Indicador de estado del servidor (Cold Start Render) */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.12);
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    color: #e2e8f0;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #fbbf24;
+    animation: pulse 1.5s infinite;
+}
+
+.status-dot.online {
+    background-color: #22c55e;
+    animation: none;
+}
+
+.status-dot.offline {
+    background-color: #ef4444;
+    animation: none;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+/* Contenedor de Chat */
+#chat-container {
+    flex: 1;
+    max-width: 920px;
+    width: 100%;
+    margin: 18px auto;
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#chat-messages {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    background-color: #f8fafc;
+}
+
+.message {
+    max-width: 82%;
+    padding: 12px 16px;
+    border-radius: 8px;
+    line-height: 1.55;
+    font-size: 0.95rem;
+    word-wrap: break-word;
+}
+
+.message.user {
+    background-color: #2563eb;
+    color: white;
+    align-self: flex-end;
+    border-bottom-right-radius: 2px;
+}
+
+.message.bot {
+    background-color: #ffffff;
+    color: #1e293b;
+    align-self: flex-start;
+    border-bottom-left-radius: 2px;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Tablas y Markdown dentro del chat */
+.msg-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 0.88em;
+    background-color: #ffffff;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.msg-content th, .msg-content td {
+    border: 1px solid #cbd5e1;
+    padding: 8px 12px;
+    text-align: left;
+}
+
+.msg-content th {
+    background-color: #1e3a8a;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.msg-content tr:nth-child(even) {
+    background-color: #f8fafc;
+}
+
+.msg-content p {
+    margin-bottom: 8px;
+}
+
+.msg-content p:last-child {
+    margin-bottom: 0;
+}
+
+.msg-content ul, .msg-content ol {
+    margin-left: 20px;
+    margin-bottom: 8px;
+}
+
+/* Pie de mensaje: fuentes, métricas y feedback */
+.msg-footer {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid #f1f5f9;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
+.feedback-btns {
+    display: flex;
+    gap: 6px;
+}
+
+.fb-btn {
+    background: #f1f5f9;
+    color: #475569;
+    border: 1px solid #cbd5e1;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    transition: all 0.15s;
+}
+
+.fb-btn:hover {
+    background: #e2e8f0;
+}
+
+.fb-btn.active-like {
+    background: #dcfce7;
+    border-color: #22c55e;
+    color: #15803d;
+}
+
+.fb-btn.active-dislike {
+    background: #fee2e2;
+    border-color: #ef4444;
+    color: #b91c1c;
+}
+
+#chat-input-area {
+    padding: 14px 20px;
+    background: white;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    gap: 10px;
+}
+
+#user-input {
+    flex: 1;
+    padding: 12px 15px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    outline: none;
+    font-size: 0.95rem;
+}
+
+#user-input:focus {
+    border-color: #3b82f6;
+}
+
+#user-input:disabled {
+    background-color: #f1f5f9;
+}
+
+/* Botones generales */
+button {
+    background-color: #1e3a8a;
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: background-color 0.2s;
+}
+
+button:hover:not(:disabled) {
+    background-color: #1e40af;
+}
+
+button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+button.secondary {
+    background-color: #475569;
+}
+
+button.secondary:hover:not(:disabled) {
+    background-color: #334155;
+}
+
+button.danger {
+    background-color: #ef4444;
+}
+
+button.danger:hover:not(:disabled) {
+    background-color: #dc2626;
+}
+
+/* Panel Administrador */
+.container {
+    flex: 1;
+    max-width: 1050px;
+    width: 100%;
+    margin: 20px auto;
+    padding: 0 15px;
+}
+
+.card {
+    background: white;
+    padding: 22px;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+}
+
+.card h2 {
+    font-size: 1.1rem;
+    color: #1e3a8a;
+    margin-bottom: 15px;
+    border-bottom: 2px solid #e2e8f0;
+    padding-bottom: 8px;
+}
+
+/* Grid de KPIs para la Tesis */
+.kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.kpi-card {
+    background: white;
+    padding: 18px;
+    border-radius: 10px;
+    border-left: 4px solid #1e3a8a;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+.kpi-card .kpi-label {
+    font-size: 0.8rem;
+    color: #64748b;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.kpi-card .kpi-value {
+    font-size: 1.65rem;
+    font-weight: 700;
+    color: #1e3a8a;
+    margin-top: 6px;
+}
+
+.upload-area {
+    border: 2px dashed #cbd5e1;
+    padding: 24px;
+    text-align: center;
+    border-radius: 8px;
+    background-color: #f8fafc;
+    transition: border-color 0.2s;
+}
+
+.upload-area:hover {
+    border-color: #3b82f6;
+}
+
+.admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 0.9em;
+}
+
+.admin-table th, .admin-table td {
+    border: 1px solid #cbd5e1;
+    padding: 10px 12px;
+    text-align: left;
+}
+
+.admin-table th {
+    background-color: #f1f5f9;
+    color: #334155;
+    font-weight: 600;
+}
+
+.admin-table tr:nth-child(even) {
+    background-color: #f8fafc;
+}
+
+/* Modal de Login Admin */
+.login-box {
+    max-width: 400px;
+    margin: 80px auto;
+    background: white;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    text-align: center;
+}
+
+.login-box input {
+    width: 100%;
+    padding: 12px;
+    margin: 15px 0;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 0.95rem;
+}
+
+@media (max-width: 640px) {
+    header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .message {
+        max-width: 92%;
+    }
+}
