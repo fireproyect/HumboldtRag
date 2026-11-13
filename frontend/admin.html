@@ -149,10 +149,10 @@
                     <thead>
                         <tr>
                             <th>Nombre del Archivo</th>
-                            <th>Tipo</th>
+                            <th>Tipo / Estado</th>
                             <th>Acciones</th>
                         </tr>
-                    $</thead>
+                    </thead>
                     <tbody id="tabla-inventario">
                         <tr>
                             <td colspan="3" style="text-align: center; color: #64748b;">Cargando inventario...</td>
@@ -164,7 +164,7 @@
     </div>
 
     <script>
-        // URL de tu backend en Render (Asegúrate de que sea exacta)
+        // URL de tu backend en Render
         const API_URL = "https://humboldtrag.onrender.com";
 
         document.addEventListener("DOMContentLoaded", () => {
@@ -189,7 +189,8 @@
             statusDiv.innerText = `Subiendo e indexando "${archivo.name}" (esto puede tomar unos segundos)...`;
 
             try {
-                const response = await fetch(`${API_URL}/upload`, {
+                // Ruta correcta conectada al endpoint con prefijo /admin/subir de tu main.py
+                const response = await fetch(`${API_URL}/admin/subir`, {
                     method: "POST",
                     body: formData
                 });
@@ -200,7 +201,7 @@
 
                 const resultado = await response.json();
                 statusDiv.style.color = "green";
-                statusDiv.innerText = `¡Éxito! Archivo procesado correctamente. Chunks/Vectores generados: ${resultado.chunks_generados || 1}`;
+                statusDiv.innerText = `¡Éxito! ${resultado.mensaje}`;
                 
                 fileInput.value = "";
                 cargarInventario();
@@ -215,25 +216,26 @@
         async function cargarInventario() {
             const tbody = document.getElementById("tabla-inventario");
             try {
-                const response = await fetch(`${API_URL}/documentos`);
+                // Ruta correcta conectada al endpoint con prefijo /admin/documentos/conteo de tu main.py
+                const response = await fetch(`${API_URL}/admin/documentos/conteo`);
                 if (!response.ok) throw new Error("No se pudo obtener el inventario");
 
                 const data = await response.json();
-                const documentos = data.documentos || [];
+                const archivos = data.archivos || [];
 
-                if (documentos.length === 0) {
+                if (archivos.length === 0) {
                     tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #64748b;">No hay archivos indexados en la base de datos.</td></tr>`;
                     return;
                 }
 
                 tbody.innerHTML = "";
-                documentos.forEach(doc => {
+                archivos.forEach(nombreArchivo => {
                     const tr = document.createElement("tr");
                     tr.innerHTML = `
-                        <td><b>${doc.nombre}</b></td>
-                        <td><span style="background: #e2e8f0; padding: 3px 8px; border-radius: 4px; font-size: 0.85rem;">${doc.tipo}</span></td>
+                        <td><b>${nombreArchivo}</b></td>
+                        <td><span style="background: #e2e8f0; padding: 3px 8px; border-radius: 4px; font-size: 0.85rem;">Indexado</span></td>
                         <td>
-                            <button class="danger" onclick="eliminarArchivo('${doc.nombre}')" style="padding: 5px 10px; font-size: 0.8rem;">Eliminar</button>
+                            <button class="danger" onclick="eliminarArchivo('${nombreArchivo}')" style="padding: 5px 10px; font-size: 0.8rem;">Eliminar</button>
                         </td>
                     `;
                     tbody.appendChild(tr);
@@ -249,7 +251,8 @@
             if (!confirm(`¿Estás seguro de eliminar "${nombreArchivo}" de la base de datos vectorial?`)) return;
 
             try {
-                const response = await fetch(`${API_URL}/documentos/${encodeURIComponent(nombreArchivo)}`, {
+                // Ruta correcta conectada al endpoint con prefijo /admin/documentos/ de tu main.py
+                const response = await fetch(`${API_URL}/admin/documentos/${encodeURIComponent(nombreArchivo)}`, {
                     method: "DELETE"
                 });
 
