@@ -122,33 +122,34 @@ def consultar_rag(pregunta: str) -> dict:
         )
         vector_pregunta = embedding_response.embeddings[0].values
 
-        # Búsqueda por similitud en Supabase (pgvector) optimizada con umbral flexible
+        # Búsqueda por similitud en Supabase (pgvector) con umbral ampliado y mayor capacidad
         respuesta_db = supabase.rpc(
             "match_documents",
             {
                 "query_embedding": vector_pregunta,
-                "match_threshold": 0.2,  # Umbral flexible para garantizar captura de imágenes y textos afines
-                "match_count": 6         # Cantidad de fragmentos recuperados simultáneamente
+                "match_threshold": 0.15,  # Umbral más amplio para capturar imágenes junto con textos
+                "match_count": 8          # Mayor capacidad de contexto recuperado
             }
         ).execute()
 
         fragmentos = respuesta_db.data
         contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante."
 
-        # Construcción del prompt institucional estructurado
+        # Prompt optimizado para equilibrar documentos de texto e imágenes
         prompt_final = f"""
         Eres un asistente institucional experto para el Trabajo de Grado de la Universidad Alejandro de Humboldt. 
-        Responde utilizando EXCLUSIVAMENTE la información del contexto y el inventario proporcionados. 
-        Si la información no se encuentra allí, indícalo amablemente.
+        Analiza detalladamente todo el contexto recuperado, el cual puede contener fragmentos de documentos de texto (PDF, Word, Excel) así como transcripciones de imágenes/multimedia.
 
-        [INVENTARIO DE ARCHIVOS DISPONIBLES]:
+        [INVENTARIO GENERAL DE ARCHIVOS EN EL SISTEMA]:
         {inventario_archivos}
 
-        [CONTEXTO RECUPERADO]:
+        [CONTEXTO RECUPERADO DE LA BASE DE DATOS]:
         {contexto}
 
         [PREGUNTA DEL USUARIO]:
         {pregunta}
+
+        Instrucción crítica: Si la pregunta menciona una imagen, cédula, RIF o archivo multimedia presente en el inventario, busca su contenido extraído dentro del contexto recuperado y respóndela con precisión, incluso si hay documentos de texto mezclados.
         """
 
         response = gemini_client.models.generate_content(
@@ -169,3 +170,4 @@ def eliminar_documento_por_fuente(nombre_archivo: str):
         supabase.table("documents").delete().eq("metadata->>fuente", nombre_archivo).execute()
     except Exception as e:
         raise Exception(f"Error al eliminar el documento en Supabase: {str(e)}")
+            
