@@ -9,14 +9,20 @@ from rag_service import consultar_rag, procesar_y_guardar_archivo, eliminar_docu
 
 load_dotenv()
 
-app = FastAPI(title="Tesis RAG Backend Multimodal", version="2.0")
+app = FastAPI(
+    title="Tesis RAG Backend Multimodal e Híbrido", 
+    description="Backend oficial con FastAPI, Supabase pgvector, gemini-embedding-2 y gemini-3.5-flash-lite",
+    version="2.1"
+)
 
+# Cliente Supabase para endpoints administrativos directos
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
 
 class QueryRequest(BaseModel):
     pregunta: str
 
-@app.post("/chat")
+# Endpoint principal de chat RAG
+@app.post("/chat", tags=["RAG"])
 def chat_endpoint(request: QueryRequest):
     try:
         resultado = consultar_rag(request.pregunta)
@@ -24,11 +30,11 @@ def chat_endpoint(request: QueryRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/admin/subir")
+# Endpoint para subir e indexar archivos multimedia y de texto
+@app.post("/admin/subir", tags=["Admin"])
 async def subir_archivo(file: UploadFile = File(...)):
     extension = file.filename.lower().split('.')[-1]
     
-    # Extensiones permitidas ahora incluyendo imágenes gracias a la multimodalidad
     formatos_permitidos = ["pdf", "docx", "xlsx", "png", "jpg", "jpeg"]
     if extension not in formatos_permitidos:
         raise HTTPException(
@@ -44,7 +50,7 @@ async def subir_archivo(file: UploadFile = File(...)):
         total_unidades = procesar_y_guardar_archivo(ruta_temporal, file.filename)
         return {
             "status": "success",
-            "mensaje": f"Archivo '{file.filename}' procesado e indexado multimodalmente correctamente ({total_unidades} elementos vectorizados)."
+            "mensaje": f"Archivo '{file.filename}' procesado e indexado correctamente ({total_unidades} elementos vectorizados)."
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -52,7 +58,8 @@ async def subir_archivo(file: UploadFile = File(...)):
         if os.path.exists(ruta_temporal):
             os.remove(ruta_temporal)
 
-@app.delete("/admin/documentos/{nombre_archivo}")
+# Endpoint para eliminar documentos por nombre de archivo
+@app.delete("/admin/documentos/{nombre_archivo}", tags=["Admin"])
 def eliminar_archivo(nombre_archivo: str):
     try:
         eliminar_documento_por_fuente(nombre_archivo)
@@ -63,6 +70,7 @@ def eliminar_archivo(nombre_archivo: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Endpoint administrativo para conteo y listado de archivos en Supabase
 @app.get("/admin/documentos/conteo", tags=["Admin"])
 def obtener_conteo_documentos():
     try:
@@ -86,6 +94,7 @@ def obtener_conteo_documentos():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/")
+# Endpoint raíz de verificación
+@app.get("/", tags=["General"])
 def root():
-    return {"status": "Backend RAG Multimodal operando al 100% 🚀"}
+    return {"status": "Backend RAG Multimodal Híbrido operando al 100% 🚀"}
