@@ -1,4 +1,4 @@
-const API_URL = ""; // Al estar en Vercel, las rutas relativas /api/... apuntan automáticamente al backend
+const API_URL = "https://humboldtrag.onrender.com";
 
 // Lógica de la Vista de Usuario (Chat)
 const chatForm = document.getElementById("chat-form");
