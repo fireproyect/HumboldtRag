@@ -2,46 +2,267 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Panel Administrador - Trabajo de Grado</title>
-    <link rel="stylesheet" href="styles.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Administrador - Asistente Institucional UAH</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        body {
+            background-color: #f1f5f9;
+            color: #1e293b;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        header {
+            background-color: #1e3a8a; /* Azul institucional UAH */
+            color: white;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+        header a {
+            color: #93c5fd;
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        header a:hover {
+            text-decoration: underline;
+        }
+        .container {
+            flex: 1;
+            max-width: 1000px;
+            width: 100%;
+            margin: 20px auto;
+            padding: 0 15px;
+        }
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        h2 {
+            font-size: 1.1rem;
+            color: #1e3a8a;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 8px;
+        }
+        .upload-area {
+            border: 2px dashed #cbd5e1;
+            padding: 20px;
+            text-align: center;
+            border-radius: 6px;
+            background-color: #f8fafc;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+        .upload-area:hover {
+            border-color: #3b82f6;
+        }
+        input[type="file"] {
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: #1e3a8a;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #1e40af;
+        }
+        button.danger {
+            background-color: #ef4444;
+        }
+        button.danger:hover {
+            background-color: #dc2626;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+        th, td {
+            border: 1px solid #cbd5e1;
+            padding: 10px 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f1f5f9;
+            color: #334155;
+            font-weight: 600;
+        }
+        tr:nth-child(even) {
+            background-color: #f8fafc;
+        }
+        #status-message {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+    </style>
 </head>
 <body>
-    <div class="admin-container">
-        <header class="header-nav">
-            <h1>Panel de Control de Base de Conocimiento</h1>
-            <a href="index.html" class="nav-link">← Volver al Chat de Usuario</a>
-        </header>
 
-        <section class="stats-row">
-            <div class="stat-card">
-                <span id="stat-files">0</span>
-                <label>Archivos Únicos</label>
-            </div>
-            <div class="stat-card">
-                <span id="stat-vectors">0</span>
-                <label>Registros Vectoriales</label>
-            </div>
-        </section>
+    <header>
+        <h1>Panel de Administrador - UAH</h1>
+        <a href="index.html">← Volver al Chat</a>
+    </header>
 
-        <section class="upload-box">
-            <h3>Subir Archivo o Imagen Multimodal</h3>
-            <form id="upload-form">
-                <input type="file" id="file-input" accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg" required>
-                <button type="submit" id="btn-upload">Subir e Indexar</button>
-            </form>
-            <p id="upload-status"></p>
-        </section>
-
-        <section class="inventory-box">
-            <div class="inv-header">
-                <h3>Archivos Indexados en Supabase</h3>
-                <button id="btn-refresh">Actualizar Lista</button>
+    <div class="container">
+        <!-- Sección de Carga de Archivos -->
+        <div class="card">
+            <h2>Subir Nuevo Documento o Imagen</h2>
+            <div class="upload-area">
+                <input type="file" id="file-input" accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg">
+                <br>
+                <button onclick="subirArchivo()">Proteger e Indexar Archivo</button>
             </div>
-            <ul id="document-list">
-                <li>Cargando inventario...</li>
-            </ul>
-        </section>
+            <div id="status-message"></div>
+        </div>
+
+        <!-- Sección de Inventario / Documentos Indexados -->
+        <div class="card">
+            <h2>Inventario de Archivos en la Base de Datos</h2>
+            <button onclick="cargarInventario()" style="margin-bottom: 10px; font-size: 0.85rem; padding: 6px 12px;">Actualizar Lista</button>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Nombre del Archivo</th>
+                            <th>Tipo</th>
+                            <th>Acciones</th>
+                        </tr>
+                    $</thead>
+                    <tbody id="tabla-inventario">
+                        <tr>
+                            <td colspan="3" style="text-align: center; color: #64748b;">Cargando inventario...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
-    <script src="app.js"></script>
+
+    <script>
+        // URL de tu backend en Render (Asegúrate de que sea exacta)
+        const API_URL = "https://humboldtrag.onrender.com";
+
+        document.addEventListener("DOMContentLoaded", () => {
+            cargarInventario();
+        });
+
+        async function subirArchivo() {
+            const fileInput = document.getElementById("file-input");
+            const statusDiv = document.getElementById("status-message");
+
+            if (fileInput.files.length === 0) {
+                statusDiv.style.color = "red";
+                statusDiv.innerText = "Por favor selecciona un archivo primero.";
+                return;
+            }
+
+            const archivo = fileInput.files[0];
+            const formData = new FormData();
+            formData.append("file", archivo);
+
+            statusDiv.style.color = "#1e3a8a";
+            statusDiv.innerText = `Subiendo e indexando "${archivo.name}" (esto puede tomar unos segundos)...`;
+
+            try {
+                const response = await fetch(`${API_URL}/upload`, {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error("Error al procesar el archivo en el servidor.");
+                }
+
+                const resultado = await response.json();
+                statusDiv.style.color = "green";
+                statusDiv.innerText = `¡Éxito! Archivo procesado correctamente. Chunks/Vectores generados: ${resultado.chunks_generados || 1}`;
+                
+                fileInput.value = "";
+                cargarInventario();
+
+            } catch (error) {
+                console.error(error);
+                statusDiv.style.color = "red";
+                statusDiv.innerText = "Error al conectar con el servidor para subir el archivo.";
+            }
+        }
+
+        async function cargarInventario() {
+            const tbody = document.getElementById("tabla-inventario");
+            try {
+                const response = await fetch(`${API_URL}/documentos`);
+                if (!response.ok) throw new Error("No se pudo obtener el inventario");
+
+                const data = await response.json();
+                const documentos = data.documentos || [];
+
+                if (documentos.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #64748b;">No hay archivos indexados en la base de datos.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = "";
+                documentos.forEach(doc => {
+                    const tr = document.createElement("tr");
+                    tr.innerHTML = `
+                        <td><b>${doc.nombre}</b></td>
+                        <td><span style="background: #e2e8f0; padding: 3px 8px; border-radius: 4px; font-size: 0.85rem;">${doc.tipo}</span></td>
+                        <td>
+                            <button class="danger" onclick="eliminarArchivo('${doc.nombre}')" style="padding: 5px 10px; font-size: 0.8rem;">Eliminar</button>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+
+            } catch (error) {
+                console.error(error);
+                tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: red;">Error al cargar el inventario desde el servidor.</td></tr>`;
+            }
+        }
+
+        async function eliminarArchivo(nombreArchivo) {
+            if (!confirm(`¿Estás seguro de eliminar "${nombreArchivo}" de la base de datos vectorial?`)) return;
+
+            try {
+                const response = await fetch(`${API_URL}/documentos/${encodeURIComponent(nombreArchivo)}`, {
+                    method: "DELETE"
+                });
+
+                if (!response.ok) throw new Error("Error al eliminar el archivo");
+
+                alert(`Archivo "${nombreArchivo}" eliminado con éxito.`);
+                cargarInventario();
+
+            } catch (error) {
+                console.error(error);
+                alert("Ocurrió un error al intentar eliminar el archivo.");
+            }
+        }
+    </script>
 </body>
 </html>
