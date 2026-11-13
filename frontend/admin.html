@@ -4,159 +4,103 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Panel de Administrador - Asistente Institucional UAH</title>
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        body {
-            background-color: #f1f5f9;
-            color: #1e293b;
-            display: flex;
-            flex-direction: column;
-            min-height: 100vh;
-        }
-        header {
-            background-color: #1e3a8a; /* Azul institucional UAH */
-            color: white;
-            padding: 15px 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        header h1 {
-            font-size: 1.25rem;
-            font-weight: 600;
-        }
-        header a {
-            color: #93c5fd;
-            text-decoration: none;
-            font-size: 0.9rem;
-            font-weight: 500;
-        }
-        header a:hover {
-            text-decoration: underline;
-        }
-        .container {
-            flex: 1;
-            max-width: 1000px;
-            width: 100%;
-            margin: 20px auto;
-            padding: 0 15px;
-        }
-        .card {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-        }
-        h2 {
-            font-size: 1.1rem;
-            color: #1e3a8a;
-            margin-bottom: 15px;
-            border-bottom: 2px solid #e2e8f0;
-            padding-bottom: 8px;
-        }
-        .upload-area {
-            border: 2px dashed #cbd5e1;
-            padding: 20px;
-            text-align: center;
-            border-radius: 6px;
-            background-color: #f8fafc;
-            cursor: pointer;
-            transition: border-color 0.2s;
-        }
-        .upload-area:hover {
-            border-color: #3b82f6;
-        }
-        input[type="file"] {
-            margin-bottom: 10px;
-        }
-        button {
-            background-color: #1e3a8a;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 600;
-            transition: background-color 0.2s;
-        }
-        button:hover {
-            background-color: #1e40af;
-        }
-        button.danger {
-            background-color: #ef4444;
-        }
-        button.danger:hover {
-            background-color: #dc2626;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-            font-size: 0.9em;
-        }
-        th, td {
-            border: 1px solid #cbd5e1;
-            padding: 10px 12px;
-            text-align: left;
-        }
-        th {
-            background-color: #f1f5f9;
-            color: #334155;
-            font-weight: 600;
-        }
-        tr:nth-child(even) {
-            background-color: #f8fafc;
-        }
-        #status-message {
-            margin-top: 10px;
-            font-size: 0.9rem;
-            font-weight: 500;
-        }
-    </style>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
     <header>
         <h1>Panel de Administrador - UAH</h1>
-        <a href="index.html">← Volver al Chat</a>
+        <div class="header-actions">
+            <button id="logout-btn" class="secondary" onclick="cerrarSesion()" style="display: none; padding: 6px 12px; font-size: 0.82rem;">Cerrar Sesión</button>
+            <a href="index.html">← Volver al Chat</a>
+        </div>
     </header>
 
-    <div class="container">
-        <!-- Sección de Carga de Archivos -->
+    <!-- Pantalla de Autenticación -->
+    <div id="login-section" class="login-box">
+        <h2 style="color: #1e3a8a; margin-bottom: 8px;">Acceso Restringido</h2>
+        <p style="font-size: 0.9rem; color: #64748b;">Ingresa la clave de administrador para gestionar la base de conocimiento.</p>
+        <input type="password" id="admin-password" placeholder="Contraseña de administrador..." onkeypress="if(event.key==='Enter') iniciarSesion()">
+        <button onclick="iniciarSesion()" style="width: 100%;">Ingresar al Panel</button>
+        <p id="login-error" style="color: #ef4444; font-size: 0.85rem; margin-top: 10px;"></p>
+    </div>
+
+    <!-- Contenido Protegido del Administrador -->
+    <div id="admin-content" class="container" style="display: none;">
+
+        <!-- KPIs de Evaluación para Trabajo de Grado -->
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-label">Archivos Indexados</div>
+                <div class="kpi-value" id="kpi-archivos">0</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Vectores en Supabase</div>
+                <div class="kpi-value" id="kpi-vectores">0</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Latencia Media</div>
+                <div class="kpi-value" id="kpi-latencia">0 ms</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Similitud Promedio</div>
+                <div class="kpi-value" id="kpi-similitud">0%</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Satisfacción (👍)</div>
+                <div class="kpi-value" id="kpi-satisfaccion">N/A</div>
+            </div>
+        </div>
+
+        <!-- Carga de Documentos -->
         <div class="card">
             <h2>Subir Nuevo Documento o Imagen</h2>
             <div class="upload-area">
-                <input type="file" id="file-input" accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg">
+                <input type="file" id="file-input" accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg" style="margin-bottom: 12px;">
                 <br>
-                <button onclick="subirArchivo()">Proteger e Indexar Archivo</button>
+                <button id="upload-btn" onclick="subirArchivo()">Proteger e Indexar Archivo</button>
             </div>
-            <div id="status-message"></div>
+            <div id="status-message" style="margin-top: 12px; font-size: 0.9rem; font-weight: 500;"></div>
         </div>
 
-        <!-- Sección de Inventario / Documentos Indexados -->
+        <!-- Inventario de Documentos -->
         <div class="card">
-            <h2>Inventario de Archivos en la Base de Datos</h2>
-            <button onclick="cargarInventario()" style="margin-bottom: 10px; font-size: 0.85rem; padding: 6px 12px;">Actualizar Lista</button>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h2 style="margin: 0; border: none;">Inventario de Archivos en la Base de Datos</h2>
+                <button onclick="cargarDashboard()" style="font-size: 0.82rem; padding: 6px 12px;">Actualizar Datos</button>
+            </div>
             <div style="overflow-x: auto;">
-                <table>
+                <table class="admin-table">
                     <thead>
                         <tr>
                             <th>Nombre del Archivo</th>
-                            <th>Tipo / Estado</th>
+                            <th>Estado</th>
                             <th>Acciones</th>
                         </tr>
                     </thead>
                     <tbody id="tabla-inventario">
+                        <tr><td colspan="3" style="text-align: center; color: #64748b;">Cargando inventario...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Registro de Últimas Consultas (Auditoría Tesis) -->
+        <div class="card">
+            <h2>Auditoría de Últimas Consultas RAG</h2>
+            <div style="overflow-x: auto;">
+                <table class="admin-table">
+                    <thead>
                         <tr>
-                            <td colspan="3" style="text-align: center; color: #64748b;">Cargando inventario...</td>
+                            <th>Pregunta</th>
+                            <th>Latencia</th>
+                            <th>Similitud</th>
+                            <th>Fuentes</th>
+                            <th>Feedback</th>
                         </tr>
+                    </thead>
+                    <tbody id="tabla-metricas">
+                        <tr><td colspan="5" style="text-align: center; color: #64748b;">Sin consultas registradas aún.</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -164,19 +108,61 @@
     </div>
 
     <script>
-        // URL de tu backend en Render
         const API_URL = "https://humboldtrag.onrender.com";
 
         document.addEventListener("DOMContentLoaded", () => {
-            cargarInventario();
+            const tokenGuardado = sessionStorage.getItem("uah_admin_token");
+            if (tokenGuardado) {
+                validarYMostrarPanel(tokenGuardado);
+            }
         });
+
+        function getAuthHeaders() {
+            const token = sessionStorage.getItem("uah_admin_token");
+            return { "Authorization": `Bearer ${token}` };
+        }
+
+        async function iniciarSesion() {
+            const pwd = document.getElementById("admin-password").value.trim();
+            const errorEl = document.getElementById("login-error");
+            if (!pwd) return;
+
+            errorEl.textContent = "Verificando credenciales...";
+            await validarYMostrarPanel(pwd);
+        }
+
+        async function validarYMostrarPanel(token) {
+            const errorEl = document.getElementById("login-error");
+            try {
+                const res = await fetch(`${API_URL}/admin/verificar`, {
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                if (!res.ok) throw new Error("Credenciales inválidas");
+
+                sessionStorage.setItem("uah_admin_token", token);
+                document.getElementById("login-section").style.display = "none";
+                document.getElementById("admin-content").style.display = "block";
+                document.getElementById("logout-btn").style.display = "inline-block";
+                errorEl.textContent = "";
+                cargarDashboard();
+            } catch {
+                sessionStorage.removeItem("uah_admin_token");
+                errorEl.textContent = "Contraseña incorrecta o servidor no disponible.";
+            }
+        }
+
+        function cerrarSesion() {
+            sessionStorage.removeItem("uah_admin_token");
+            location.reload();
+        }
 
         async function subirArchivo() {
             const fileInput = document.getElementById("file-input");
+            const uploadBtn = document.getElementById("upload-btn");
             const statusDiv = document.getElementById("status-message");
 
             if (fileInput.files.length === 0) {
-                statusDiv.style.color = "red";
+                statusDiv.style.color = "#ef4444";
                 statusDiv.innerText = "Por favor selecciona un archivo primero.";
                 return;
             }
@@ -185,65 +171,95 @@
             const formData = new FormData();
             formData.append("file", archivo);
 
+            uploadBtn.disabled = true;
             statusDiv.style.color = "#1e3a8a";
-            statusDiv.innerText = `Subiendo e indexando "${archivo.name}" (esto puede tomar unos segundos)...`;
+            statusDiv.innerText = `Procesando e indexando "${archivo.name}" por lotes...`;
 
             try {
-                // Ruta correcta conectada al endpoint con prefijo /admin/subir de tu main.py
                 const response = await fetch(`${API_URL}/admin/subir`, {
                     method: "POST",
+                    headers: getAuthHeaders(),
                     body: formData
                 });
 
-                if (!response.ok) {
-                    throw new Error("Error al procesar el archivo en el servidor.");
-                }
-
                 const resultado = await response.json();
-                statusDiv.style.color = "green";
-                statusDiv.innerText = `¡Éxito! ${resultado.mensaje}`;
-                
-                fileInput.value = "";
-                cargarInventario();
+                if (!response.ok) throw new Error(resultado.detail || "Error al procesar el archivo.");
 
+                statusDiv.style.color = "#15803d";
+                statusDiv.innerText = `¡Éxito! ${resultado.mensaje}`;
+                fileInput.value = "";
+                cargarDashboard();
             } catch (error) {
                 console.error(error);
-                statusDiv.style.color = "red";
-                statusDiv.innerText = "Error al conectar con el servidor para subir el archivo.";
+                statusDiv.style.color = "#ef4444";
+                statusDiv.innerText = `Error: ${error.message}`;
+            } finally {
+                uploadBtn.disabled = false;
             }
         }
 
-        async function cargarInventario() {
+        async function cargarDashboard() {
             const tbody = document.getElementById("tabla-inventario");
+            const tbodyMetricas = document.getElementById("tabla-metricas");
+
             try {
-                // Ruta correcta conectada al endpoint con prefijo /admin/documentos/conteo de tu main.py
-                const response = await fetch(`${API_URL}/admin/documentos/conteo`);
+                const response = await fetch(`${API_URL}/admin/documentos/conteo`, {
+                    headers: getAuthHeaders()
+                });
                 if (!response.ok) throw new Error("No se pudo obtener el inventario");
 
                 const data = await response.json();
-                const archivos = data.archivos || [];
 
-                if (archivos.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #64748b;">No hay archivos indexados en la base de datos.</td></tr>`;
-                    return;
+                // Actualizar KPIs
+                document.getElementById("kpi-archivos").textContent = data.total_archivos_subidos ?? 0;
+                document.getElementById("kpi-vectores").textContent = data.total_registros_vectoriales ?? 0;
+                if (data.kpis) {
+                    document.getElementById("kpi-latencia").textContent = `${data.kpis.latencia_promedio_ms} ms`;
+                    document.getElementById("kpi-similitud").textContent = `${data.kpis.similitud_promedio_pct}%`;
+                    document.getElementById("kpi-satisfaccion").textContent =
+                        data.kpis.tasa_satisfaccion_pct !== null ? `${data.kpis.tasa_satisfaccion_pct}%` : "N/A";
                 }
 
-                tbody.innerHTML = "";
-                archivos.forEach(nombreArchivo => {
-                    const tr = document.createElement("tr");
-                    tr.innerHTML = `
-                        <td><b>${nombreArchivo}</b></td>
-                        <td><span style="background: #e2e8f0; padding: 3px 8px; border-radius: 4px; font-size: 0.85rem;">Indexado</span></td>
-                        <td>
-                            <button class="danger" onclick="eliminarArchivo('${nombreArchivo}')" style="padding: 5px 10px; font-size: 0.8rem;">Eliminar</button>
-                        </td>
-                    `;
-                    tbody.appendChild(tr);
-                });
+                // Renderizar tabla de archivos
+                const archivos = data.archivos || [];
+                if (archivos.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #64748b;">No hay archivos indexados en la base de datos.</td></tr>`;
+                } else {
+                    tbody.innerHTML = "";
+                    archivos.forEach(nombreArchivo => {
+                        const tr = document.createElement("tr");
+                        tr.innerHTML = `
+                            <td><b>${nombreArchivo}</b></td>
+                            <td><span style="background: #dcfce7; color: #15803d; padding: 3px 8px; border-radius: 4px; font-size: 0.82rem; font-weight: 600;">Indexado Híbrido</span></td>
+                            <td>
+                                <button class="danger" onclick="eliminarArchivo('${nombreArchivo.replace(/'/g, "\\'")}')" style="padding: 5px 10px; font-size: 0.8rem;">Eliminar</button>
+                            </td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                }
 
+                // Renderizar tabla de auditoría de consultas
+                const consultas = data.ultimas_consultas || [];
+                if (consultas.length > 0) {
+                    tbodyMetricas.innerHTML = "";
+                    consultas.forEach(c => {
+                        const fbIcon = c.feedback === 1 ? "👍 Útil" : (c.feedback === -1 ? "👎 Mejorar" : "—");
+                        const fuentesStr = (c.fuentes_usadas && c.fuentes_usadas.length) ? c.fuentes_usadas.join(", ") : "Ninguna";
+                        const tr = document.createElement("tr");
+                        tr.innerHTML = `
+                            <td>${c.pregunta}</td>
+                            <td>${c.latencia_ms} ms</td>
+                            <td>${(c.similitud_promedio * 100).toFixed(1)}%</td>
+                            <td>${fuentesStr}</td>
+                            <td>${fbIcon}</td>
+                        `;
+                        tbodyMetricas.appendChild(tr);
+                    });
+                }
             } catch (error) {
                 console.error(error);
-                tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: red;">Error al cargar el inventario desde el servidor.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #ef4444;">Error al cargar datos del servidor.</td></tr>`;
             }
         }
 
@@ -251,16 +267,13 @@
             if (!confirm(`¿Estás seguro de eliminar "${nombreArchivo}" de la base de datos vectorial?`)) return;
 
             try {
-                // Ruta correcta conectada al endpoint con prefijo /admin/documentos/ de tu main.py
                 const response = await fetch(`${API_URL}/admin/documentos/${encodeURIComponent(nombreArchivo)}`, {
-                    method: "DELETE"
+                    method: "DELETE",
+                    headers: getAuthHeaders()
                 });
 
                 if (!response.ok) throw new Error("Error al eliminar el archivo");
-
-                alert(`Archivo "${nombreArchivo}" eliminado con éxito.`);
-                cargarInventario();
-
+                cargarDashboard();
             } catch (error) {
                 console.error(error);
                 alert("Ocurrió un error al intentar eliminar el archivo.");
