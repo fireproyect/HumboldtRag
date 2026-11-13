@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Asistente Inteligente - Universidad Alejandro de Humboldt</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="user-container">
+        <header class="header-nav">
+            <h1>Asistente Institucional UAH</h1>
+            <a href="admin.html" class="nav-link">Ir al Panel de Administrador →</a>
+        </header>
+        
+        <main class="chat-box" id="chat-messages">
+            <div class="message bot">
+                <div class="msg-content">Hola. Pregúntame sobre los documentos o imágenes indexados en el sistema de trabajo de grado.</div>
+            </div>
+        </main>
+
+        <form id="chat-form" class="chat-form">
+            <input type="text" id="user-input" placeholder="Escribe tu consulta (ej. ¿Cuál es el RIF del documento?)..." autocomplete="off" required>
+            <button type="submit">Enviar</button>
+        </form>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
