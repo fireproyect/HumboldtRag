@@ -55,7 +55,6 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
 
         contenido_completo = f"[Documento Multimedia/Imagen Fuente: {nombre_original}]\nContenido extraído:\n{texto_imagen}"
 
-        # CLAVE: Generar el embedding vectorial a partir del texto extraído para unificarlo con el espacio de texto
         embedding_response = gemini_client.models.embed_content(
             model="gemini-embedding-2",
             contents=contenido_completo,
@@ -122,7 +121,7 @@ def consultar_rag(pregunta: str) -> dict:
         )
         vector_pregunta = embedding_response.embeddings[0].values
 
-        # Búsqueda por similitud en Supabase con umbral flexible y buen match_count
+        # Búsqueda por similitud en Supabase
         respuesta_db = supabase.rpc(
             "match_documents",
             {
@@ -135,7 +134,7 @@ def consultar_rag(pregunta: str) -> dict:
         fragmentos = respuesta_db.data
         contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante."
 
-        # Prompt optimizado para coexistencia multimodal
+        # Prompt optimizado con soporte para tablas Markdown institucionales
         prompt_final = f"""
         Eres un asistente institucional experto para el Trabajo de Grado de la Universidad Alejandro de Humboldt. 
         Analiza detalladamente todo el contexto recuperado, el cual contiene fragmentos de documentos de texto (PDF, Word, Excel) y transcripciones de imágenes/multimedia.
@@ -149,7 +148,10 @@ def consultar_rag(pregunta: str) -> dict:
         [PREGUNTA DEL USUARIO]:
         {pregunta}
 
-        Instrucción crítica: Si la pregunta menciona una imagen, cédula, RIF o archivo multimedia presente en el inventario, busca su contenido extraído dentro del contexto recuperado y respóndela con absoluta precisión, integrándola con los datos de los textos si es necesario.
+        Instrucciones de formato y precisión:
+        1. Si la pregunta menciona una imagen, cédula, RIF o archivo multimedia presente en el inventario, busca su contenido extraído dentro del contexto recuperado y respóndela con precisión.
+        2. Si la respuesta involucra comparar datos, listar múltiples elementos, mostrar datos fiscales (como RIF, nombres, fechas) o presentar un inventario, **estrúcturalo obligatoriamente utilizando una tabla en formato Markdown limpio**.
+        3. Usa negritas para resaltar conceptos clave y mantén un tono profesional e institucional.
         """
 
         response = gemini_client.models.generate_content(
