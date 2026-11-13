@@ -4,167 +4,31 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Asistente Institucional UAH - Trabajo de Grado</title>
-    
-    <!-- Librería marked.js CDN para soporte de Markdown y Tablas -->
+    <link rel="stylesheet" href="styles.css">
+    <!-- Librería marked.js y DOMPurify para renderizado seguro de Markdown y Tablas -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-
-    <!-- Estilos CSS Generales y Tablas Institucionales -->
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        body {
-            background-color: #f1f5f9;
-            color: #1e293b;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
-        header {
-            background-color: #1e3a8a; /* Azul institucional UAH */
-            color: white;
-            padding: 15px 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        header h1 {
-            font-size: 1.25rem;
-            font-weight: 600;
-        }
-        header a {
-            color: #93c5fd;
-            text-decoration: none;
-            font-size: 0.9rem;
-            font-weight: 500;
-        }
-        header a:hover {
-            text-decoration: underline;
-        }
-        #chat-container {
-            flex: 1;
-            max-width: 900px;
-            width: 100%;
-            margin: 20px auto;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-        #chat-messages {
-            flex: 1;
-            padding: 20px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-            background-color: #f8fafc;
-        }
-        .message {
-            max-width: 80%;
-            padding: 12px 16px;
-            border-radius: 8px;
-            line-height: 1.5;
-            font-size: 0.95rem;
-            word-wrap: break-word;
-        }
-        .message.user {
-            background-color: #3b82f6;
-            color: white;
-            align-self: flex-end;
-            border-bottom-right-radius: 2px;
-        }
-        .message.bot {
-            background-color: #ffffff;
-            color: #1e293b;
-            align-self: flex-start;
-            border-bottom-left-radius: 2px;
-            border: 1px solid #e2e8f0;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-        }
-        
-        /* Estilos clave para renderizar tablas Markdown dentro del chat */
-        .msg-content table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 12px 0;
-            font-size: 0.9em;
-            background-color: #ffffff;
-            border-radius: 6px;
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        }
-        .msg-content th, .msg-content td {
-            border: 1px solid #cbd5e1;
-            padding: 8px 12px;
-            text-align: left;
-        }
-        .msg-content th {
-            background-color: #1e3a8a;
-            color: #ffffff;
-            font-weight: 600;
-        }
-        .msg-content tr:nth-child(even) {
-            background-color: #f8fafc;
-        }
-        .msg-content p {
-            margin-bottom: 8px;
-        }
-        .msg-content p:last-child {
-            margin-bottom: 0;
-        }
-
-        #chat-input-area {
-            padding: 15px 20px;
-            background: white;
-            border-top: 1px solid #e2e8f0;
-            display: flex;
-            gap: 10px;
-        }
-        #user-input {
-            flex: 1;
-            padding: 12px 15px;
-            border: 1px solid #cbd5e1;
-            border-radius: 6px;
-            outline: none;
-            font-size: 0.95rem;
-            transition: border-color 0.2s;
-        }
-        #user-input:focus {
-            border-color: #3b82f6;
-        }
-        #send-btn {
-            background-color: #1e3a8a;
-            color: white;
-            border: none;
-            padding: 0 20px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 600;
-            transition: background-color 0.2s;
-        }
-        #send-btn:hover {
-            background-color: #1e40af;
-        }
-    </style>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 </head>
-<body>
+<body class="chat-page">
 
     <header>
-        <h1>Asistente Institucional UAH</h1>
-        <a href="admin.html">Ir al Panel de Administrador →</a>
+        <div class="header-left">
+            <h1>Asistente Institucional UAH</h1>
+            <div class="status-badge" id="server-status">
+                <span class="status-dot" id="status-dot"></span>
+                <span id="status-text">Conectando motor IA...</span>
+            </div>
+        </div>
+        <div class="header-actions">
+            <button class="secondary" onclick="limpiarChat()" style="padding: 6px 12px; font-size: 0.82rem;">Nueva Consulta</button>
+            <a href="admin.html">Panel Administrador →</a>
+        </div>
     </header>
 
     <div id="chat-container">
         <div id="chat-messages">
             <div class="message bot">
-                <div class="msg-content">Hola. Pregúntame sobre los documentos o imágenes indexados en el sistema de trabajo de grado.</div>
+                <div class="msg-content">Hola. Soy el Asistente Institucional de la Universidad Alejandro de Humboldt. Puedes consultarme sobre normativas, documentos o imágenes indexadas en el sistema.</div>
             </div>
         </div>
         
@@ -174,7 +38,6 @@
         </div>
     </div>
 
-    <!-- Archivo de lógica de la aplicación -->
     <script src="app.js"></script>
 </body>
 </html>
