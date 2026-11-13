@@ -10,9 +10,9 @@ from rag_service import consultar_rag, procesar_y_guardar_archivo, eliminar_docu
 load_dotenv()
 
 app = FastAPI(
-    title="Tesis RAG Backend Multimodal e Híbrido", 
-    description="Backend oficial con FastAPI, Supabase pgvector, gemini-embedding-2 y gemini-3.5-flash-lite",
-    version="2.1"
+    title="Humboldt RAG Backend Multimodal e Híbrido", 
+    description="Backend oficial para trabajo de grado - Universidad Alejandro de Humboldt (FastAPI, Supabase pgvector, gemini-embedding-2 y gemini-3.5-flash-lite)",
+    version="2.2"
 )
 
 # Cliente Supabase para endpoints administrativos directos
@@ -97,4 +97,4 @@ def obtener_conteo_documentos():
 # Endpoint raíz de verificación
 @app.get("/", tags=["General"])
 def root():
-    return {"status": "Backend RAG Multimodal Híbrido operando al 100% 🚀"}
+    return {"status": "Backend Humboldt RAG Multimodal Híbrido operando al 100% 🚀"}
