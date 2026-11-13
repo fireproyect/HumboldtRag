@@ -1,28 +1,35 @@
-<!DOCTYPE html>
-<html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Asistente Inteligente - Universidad Alejandro de Humboldt</title>
-    <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-    <div class="user-container">
-        <header class="header-nav">
-            <h1>Asistente Institucional UAH</h1>
-            <a href="admin.html" class="nav-link">Ir al Panel de Administrador →</a>
-        </header>
-        
-        <main class="chat-box" id="chat-messages">
-            <div class="message bot">
-                <div class="msg-content">Hola. Pregúntame sobre los documentos o imágenes indexados en el sistema de trabajo de grado.</div>
-            </div>
-        </main>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asistente Institucional UAH</title>
+    
+    <!-- Librería marked.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
-        <form id="chat-form" class="chat-form">
-            <input type="text" id="user-input" placeholder="Escribe tu consulta (ej. ¿Cuál es el RIF del documento?)..." autocomplete="off" required>
-            <button type="submit">Enviar</button>
-        </form>
-    </div>
-    <script src="app.js"></script>
-</body>
-</html>
+    <!-- Estilos CSS institucionales para las tablas del chat -->
+    <style>
+        .msg-content table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            font-size: 0.9em;
+            background-color: #ffffff;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .msg-content th, .msg-content td {
+            border: 1px solid #cbd5e1;
+            padding: 8px 12px;
+            text-align: left;
+        }
+        .msg-content th {
+            background-color: #1e3a8a; /* Azul institucional UAH */
+            color: #ffffff;
+            font-weight: 600;
+        }
+        .msg-content tr:nth-child(even) {
+            background-color: #f8fafc;
+        }
+    </style>
+</head>
