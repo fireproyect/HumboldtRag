@@ -35,7 +35,7 @@ def extraer_texto_de_archivo(ruta_archivo: str) -> str:
 
     return texto_extraido
 
-# 2. Ingesta: Fragmentar, vectorizar y guardar en Supabase
+# 2. Ingesta: Fragmentar, integrar el nombre del archivo, vectorizar con gemini-embedding-2 y guardar
 def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
     texto_completo = extraer_texto_de_archivo(ruta_archivo)
     
@@ -49,17 +49,20 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
             chunks.append(chunk)
 
     for i, chunk in enumerate(chunks):
-        # Generar embedding con 768 dimensiones
+        # Integrar la fuente explícitamente para que el modelo la reconozca al consultar
+        chunk_con_fuente = f"[Documento Fuente: {nombre_original}]\n{chunk}"
+
+        # Generar embedding utilizando el modelo multimodal gemini-embedding-2
         embedding_response = gemini_client.models.embed_content(
-            model="gemini-embedding-001",
-            contents=chunk,
+            model="gemini-embedding-2",
+            contents=chunk_con_fuente,
             config=types.EmbedContentConfig(output_dimensionality=768)
         )
         vector = embedding_response.embeddings[0].values
 
         # Insertar en Supabase
         data = {
-            "content": chunk,
+            "content": chunk_con_fuente,
             "metadata": {"fuente": nombre_original, "fragmento": i},
             "embedding": vector
         }
@@ -67,11 +70,11 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str):
 
     return len(chunks)
 
-# 3. Consulta (RAG): Buscar en Supabase y responder con Gemini
+# 3. Consulta (RAG): Buscar en Supabase y responder con gemini-3.5-flash-lite
 def consultar_rag(pregunta_usuario: str):
-    # Generar vector de la pregunta
+    # Generar vector de la pregunta usando gemini-embedding-2
     embedding_response = gemini_client.models.embed_content(
-        model="gemini-embedding-001",
+        model="gemini-embedding-2",
         contents=pregunta_usuario,
         config=types.EmbedContentConfig(output_dimensionality=768)
     )
@@ -94,7 +97,8 @@ def consultar_rag(pregunta_usuario: str):
     prompt_final = f"""
     Eres un asistente institucional experto. Responde a la pregunta del usuario utilizando EXCLUSIVAMENTE 
     la información provista en el contexto. Si la respuesta no está en el contexto, di amablemente 
-    que no posees esa información.
+    que no posees esa información. Si el usuario te pregunta por el archivo o la fuente, indícalo basándote 
+    en las etiquetas [Documento Fuente: ...] presentes en el contexto.
 
     [CONTEXTO]:
     {contexto}
@@ -103,7 +107,7 @@ def consultar_rag(pregunta_usuario: str):
     {pregunta_usuario}
     """
 
-    # Usar gemini-3.6-flash para la generación de la respuesta
+    # Usar gemini-3.5-flash-lite para una generación rápida y de baja latencia
     response = gemini_client.models.generate_content(
         model="gemini-3.5-flash-lite",
         contents=prompt_final
