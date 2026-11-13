@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Panel Administrador - Trabajo de Grado</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="admin-container">
+        <header class="header-nav">
+            <h1>Panel de Control de Base de Conocimiento</h1>
+            <a href="index.html" class="nav-link">← Volver al Chat de Usuario</a>
+        </header>
+
+        <section class="stats-row">
+            <div class="stat-card">
+                <span id="stat-files">0</span>
+                <label>Archivos Únicos</label>
+            </div>
+            <div class="stat-card">
+                <span id="stat-vectors">0</span>
+                <label>Registros Vectoriales</label>
+            </div>
+        </section>
+
+        <section class="upload-box">
+            <h3>Subir Archivo o Imagen Multimodal</h3>
+            <form id="upload-form">
+                <input type="file" id="file-input" accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg" required>
+                <button type="submit" id="btn-upload">Subir e Indexar</button>
+            </form>
+            <p id="upload-status"></p>
+        </section>
+
+        <section class="inventory-box">
+            <div class="inv-header">
+                <h3>Archivos Indexados en Supabase</h3>
+                <button id="btn-refresh">Actualizar Lista</button>
+            </div>
+            <ul id="document-list">
+                <li>Cargando inventario...</li>
+            </ul>
+        </section>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
