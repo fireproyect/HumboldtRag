@@ -86,10 +86,10 @@ async function enviarMensaje() {
     inputField.disabled = true;
     sendBtn.disabled = true;
 
-    appendMessage(textoPregunta, "user");
+    await appendMessage(textoPregunta, "user");
     inputField.value = "";
 
-    const idCargando = appendMessage("Consultando base de conocimiento de Victory Logistic...", "bot");
+    const idCargando = await appendMessage("Consultando base de conocimiento de Victory Logistic...", "bot");
 
     try {
         const response = await fetch(`${API_URL}/chat`, {
@@ -101,12 +101,14 @@ async function enviarMensaje() {
             })
         });
 
-        if (!response.ok) {
-            throw new Error(`Error en el servidor: ${response.statusText}`);
-        }
-
         const data = await response.json();
-        document.getElementById(idCargando).remove();
+
+        const cargandoEl = document.getElementById(idCargando);
+        if (cargandoEl) cargandoEl.remove();
+
+        if (!response.ok) {
+            throw new Error(data.detail || `Error HTTP ${response.status}`);
+        }
 
         historialConversacion.push({ rol: "user", texto: textoPregunta });
         historialConversacion.push({ rol: "assistant", texto: data.respuesta });
@@ -121,10 +123,10 @@ async function enviarMensaje() {
         });
 
     } catch (error) {
-        console.error("Error al conectar con el backend:", error);
+        console.error("Error detallado en el chat:", error);
         const cargandoEl = document.getElementById(idCargando);
         if (cargandoEl) cargandoEl.remove();
-        appendMessage("Lo siento, ocurrió un error de conexión con el servidor de Victory Logistic. Intenta nuevamente en unos segundos.", "bot");
+        await appendMessage(`No se pudo procesar la consulta: ${error.message}`, "bot");
     } finally {
         inputField.disabled = false;
         sendBtn.disabled = false;
