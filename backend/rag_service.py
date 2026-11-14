@@ -178,15 +178,26 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
         )
         vector_pregunta = embedding_response.embeddings[0].values
 
-        respuesta_db = supabase.rpc(
-            "match_documents_hybrid",
-            {
-                "query_text": pregunta,
-                "query_embedding": vector_pregunta,
-                "match_threshold": 0.35,
-                "match_count": 8
-            }
-        ).execute()
+        # Búsqueda Híbrida con respaldo vectorial automático
+        try:
+            respuesta_db = supabase.rpc(
+                "match_documents_hybrid",
+                {
+                    "query_text": pregunta,
+                    "query_embedding": vector_pregunta,
+                    "match_threshold": 0.35,
+                    "match_count": 8
+                }
+            ).execute()
+        except Exception:
+            respuesta_db = supabase.rpc(
+                "match_documents",
+                {
+                    "query_embedding": vector_pregunta,
+                    "match_threshold": 0.35,
+                    "match_count": 8
+                }
+            ).execute()
 
         fragmentos = respuesta_db.data or []
         contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante en los documentos indexados."
