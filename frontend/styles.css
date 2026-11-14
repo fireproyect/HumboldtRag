@@ -1,50 +1,92 @@
+:root {
+    --bg-body: #f1f5f9;
+    --bg-surface: #ffffff;
+    --bg-chat: #f8fafc;
+    --bg-subtle: #f1f5f9;
+    --text-primary: #1e293b;
+    --text-secondary: #64748b;
+    --border-color: #e2e8f0;
+    --border-strong: #cbd5e1;
+    --brand-primary: #0f294a; /* Azul corporativo Victory Logistic */
+    --brand-accent: #2563eb;
+    --brand-accent-hover: #1d4ed8;
+    --user-msg-bg: #2563eb;
+    --user-msg-text: #ffffff;
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --table-stripe: #f8fafc;
+}
+
+[data-theme="dark"] {
+    --bg-body: #0b1120;
+    --bg-surface: #1e293b;
+    --bg-chat: #0f172a;
+    --bg-subtle: #334155;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --border-color: #334155;
+    --border-strong: #475569;
+    --brand-primary: #091526;
+    --brand-accent: #3b82f6;
+    --brand-accent-hover: #60a5fa;
+    --user-msg-bg: #1d4ed8;
+    --user-msg-text: #ffffff;
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+    --table-stripe: #162032;
+}
+
 * {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
 body {
-    background-color: #f1f5f9;
-    color: #1e293b;
+    background-color: var(--bg-body);
+    color: var(--text-primary);
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    transition: background-color 0.25s, color 0.25s;
 }
 
 body.chat-page {
-    height: 100vh;
+    height: 100dvh;
     overflow: hidden;
 }
 
-/* Header Institucional UAH */
+/* Header Victory Logistic */
 header {
-    background-color: #1e3a8a;
-    color: white;
+    background-color: var(--brand-primary);
+    color: #ffffff;
     padding: 14px 24px;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.12);
+    box-shadow: var(--shadow-sm);
     gap: 12px;
+    z-index: 10;
 }
 
 .header-left {
     display: flex;
     align-items: center;
     gap: 14px;
+    flex-wrap: wrap;
 }
 
 header h1 {
-    font-size: 1.2rem;
-    font-weight: 600;
+    font-size: 1.18rem;
+    font-weight: 700;
+    letter-spacing: 0.2px;
 }
 
 .header-actions {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
 }
 
 header a {
@@ -58,7 +100,24 @@ header a:hover {
     text-decoration: underline;
 }
 
-/* Indicador de estado del servidor (Cold Start Render) */
+.theme-toggle {
+    background: rgba(255, 255, 255, 0.14);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.theme-toggle:hover {
+    background: rgba(255, 255, 255, 0.24);
+}
+
+/* Indicador de estado del servidor */
 .status-badge {
     display: inline-flex;
     align-items: center;
@@ -96,12 +155,13 @@ header a:hover {
 /* Contenedor de Chat */
 #chat-container {
     flex: 1;
-    max-width: 920px;
+    max-width: 960px;
     width: 100%;
-    margin: 18px auto;
-    background: white;
-    border-radius: 10px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    margin: 16px auto;
+    background: var(--bg-surface);
+    border-radius: 12px;
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -113,33 +173,33 @@ header a:hover {
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 15px;
-    background-color: #f8fafc;
+    gap: 16px;
+    background-color: var(--bg-chat);
 }
 
 .message {
-    max-width: 82%;
-    padding: 12px 16px;
-    border-radius: 8px;
+    max-width: 84%;
+    padding: 13px 17px;
+    border-radius: 10px;
     line-height: 1.55;
     font-size: 0.95rem;
     word-wrap: break-word;
 }
 
 .message.user {
-    background-color: #2563eb;
-    color: white;
+    background-color: var(--user-msg-bg);
+    color: var(--user-msg-text);
     align-self: flex-end;
     border-bottom-right-radius: 2px;
 }
 
 .message.bot {
-    background-color: #ffffff;
-    color: #1e293b;
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
     align-self: flex-start;
     border-bottom-left-radius: 2px;
-    border: 1px solid #e2e8f0;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow-sm);
 }
 
 /* Tablas y Markdown dentro del chat */
@@ -148,26 +208,27 @@ header a:hover {
     border-collapse: collapse;
     margin: 12px 0;
     font-size: 0.88em;
-    background-color: #ffffff;
+    background-color: var(--bg-surface);
     border-radius: 6px;
     overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    display: block;
+    overflow-x: auto;
 }
 
 .msg-content th, .msg-content td {
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--border-strong);
     padding: 8px 12px;
     text-align: left;
 }
 
 .msg-content th {
-    background-color: #1e3a8a;
+    background-color: var(--brand-primary);
     color: #ffffff;
     font-weight: 600;
 }
 
 .msg-content tr:nth-child(even) {
-    background-color: #f8fafc;
+    background-color: var(--table-stripe);
 }
 
 .msg-content p {
@@ -183,18 +244,42 @@ header a:hover {
     margin-bottom: 8px;
 }
 
-/* Pie de mensaje: fuentes, métricas y feedback */
+/* Contenedores de Chart.js y Mermaid.js */
+.chart-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 620px;
+    min-height: 260px;
+    margin: 14px 0;
+    padding: 12px;
+    background: var(--bg-chat);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.mermaid-wrapper {
+    margin: 14px 0;
+    padding: 14px;
+    background: var(--bg-chat);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow-x: auto;
+    display: flex;
+    justify-content: center;
+}
+
+/* Pie de mensaje: fuentes y feedback */
 .msg-footer {
     margin-top: 10px;
     padding-top: 8px;
-    border-top: 1px solid #f1f5f9;
+    border-top: 1px solid var(--border-color);
     display: flex;
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
     font-size: 0.8rem;
-    color: #64748b;
+    color: var(--text-secondary);
 }
 
 .feedback-btns {
@@ -203,10 +288,10 @@ header a:hover {
 }
 
 .fb-btn {
-    background: #f1f5f9;
-    color: #475569;
-    border: 1px solid #cbd5e1;
-    padding: 2px 8px;
+    background: var(--bg-subtle);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    padding: 3px 9px;
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.78rem;
@@ -214,7 +299,7 @@ header a:hover {
 }
 
 .fb-btn:hover {
-    background: #e2e8f0;
+    opacity: 0.85;
 }
 
 .fb-btn.active-like {
@@ -230,9 +315,9 @@ header a:hover {
 }
 
 #chat-input-area {
-    padding: 14px 20px;
-    background: white;
-    border-top: 1px solid #e2e8f0;
+    padding: 14px 18px;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border-color);
     display: flex;
     gap: 10px;
 }
@@ -240,27 +325,29 @@ header a:hover {
 #user-input {
     flex: 1;
     padding: 12px 15px;
-    border: 1px solid #cbd5e1;
-    border-radius: 6px;
+    background: var(--bg-chat);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
     outline: none;
     font-size: 0.95rem;
 }
 
 #user-input:focus {
-    border-color: #3b82f6;
+    border-color: var(--brand-accent);
 }
 
 #user-input:disabled {
-    background-color: #f1f5f9;
+    opacity: 0.6;
 }
 
 /* Botones generales */
 button {
-    background-color: #1e3a8a;
+    background-color: var(--brand-accent);
     color: white;
     border: none;
     padding: 10px 18px;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
     font-weight: 600;
     font-size: 0.9rem;
@@ -268,7 +355,7 @@ button {
 }
 
 button:hover:not(:disabled) {
-    background-color: #1e40af;
+    background-color: var(--brand-accent-hover);
 }
 
 button:disabled {
@@ -295,69 +382,134 @@ button.danger:hover:not(:disabled) {
 /* Panel Administrador */
 .container {
     flex: 1;
-    max-width: 1050px;
+    max-width: 1060px;
     width: 100%;
     margin: 20px auto;
-    padding: 0 15px;
+    padding: 0 16px;
 }
 
 .card {
-    background: white;
+    background: var(--bg-surface);
     padding: 22px;
     border-radius: 10px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border-color);
     margin-bottom: 20px;
 }
 
 .card h2 {
-    font-size: 1.1rem;
-    color: #1e3a8a;
+    font-size: 1.08rem;
+    color: var(--text-primary);
     margin-bottom: 15px;
-    border-bottom: 2px solid #e2e8f0;
+    border-bottom: 2px solid var(--border-color);
     padding-bottom: 8px;
 }
 
-/* Grid de KPIs para la Tesis */
+/* Grid de KPIs con Tooltips al pasar el mouse */
 .kpi-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
     gap: 15px;
     margin-bottom: 20px;
 }
 
 .kpi-card {
-    background: white;
+    position: relative;
+    background: var(--bg-surface);
     padding: 18px;
     border-radius: 10px;
-    border-left: 4px solid #1e3a8a;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--brand-accent);
+    box-shadow: var(--shadow-sm);
+    cursor: help;
 }
 
-.kpi-card .kpi-label {
-    font-size: 0.8rem;
-    color: #64748b;
+.kpi-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+}
+
+.kpi-label {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
     text-transform: uppercase;
-    font-weight: 600;
+    font-weight: 700;
 }
 
-.kpi-card .kpi-value {
+.kpi-info-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--bg-subtle);
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.kpi-value {
     font-size: 1.65rem;
     font-weight: 700;
-    color: #1e3a8a;
+    color: var(--text-primary);
     margin-top: 6px;
 }
 
+/* Tooltip emergente al hacer hover */
+.kpi-tooltip {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    bottom: calc(100% + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 240px;
+    background-color: #0f172a;
+    color: #f8fafc;
+    text-align: left;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    font-weight: 400;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
+    z-index: 50;
+    transition: opacity 0.2s, visibility 0.2s;
+    pointer-events: none;
+}
+
+.kpi-tooltip::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -6px;
+    border-width: 6px;
+    border-style: solid;
+    border-color: #0f172a transparent transparent transparent;
+}
+
+.kpi-card:hover .kpi-tooltip,
+.kpi-card:focus-within .kpi-tooltip {
+    visibility: visible;
+    opacity: 1;
+}
+
 .upload-area {
-    border: 2px dashed #cbd5e1;
+    border: 2px dashed var(--border-strong);
     padding: 24px;
     text-align: center;
     border-radius: 8px;
-    background-color: #f8fafc;
+    background-color: var(--bg-chat);
     transition: border-color 0.2s;
 }
 
 .upload-area:hover {
-    border-color: #3b82f6;
+    border-color: var(--brand-accent);
 }
 
 .admin-table {
@@ -368,29 +520,30 @@ button.danger:hover:not(:disabled) {
 }
 
 .admin-table th, .admin-table td {
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--border-strong);
     padding: 10px 12px;
     text-align: left;
 }
 
 .admin-table th {
-    background-color: #f1f5f9;
-    color: #334155;
+    background-color: var(--bg-subtle);
+    color: var(--text-primary);
     font-weight: 600;
 }
 
 .admin-table tr:nth-child(even) {
-    background-color: #f8fafc;
+    background-color: var(--table-stripe);
 }
 
 /* Modal de Login Admin */
 .login-box {
     max-width: 400px;
-    margin: 80px auto;
-    background: white;
+    margin: 70px auto;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
     padding: 30px;
-    border-radius: 10px;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    border-radius: 12px;
+    box-shadow: var(--shadow-md);
     text-align: center;
 }
 
@@ -398,17 +551,99 @@ button.danger:hover:not(:disabled) {
     width: 100%;
     padding: 12px;
     margin: 15px 0;
-    border: 1px solid #cbd5e1;
-    border-radius: 6px;
+    background: var(--bg-chat);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
     font-size: 0.95rem;
 }
 
-@media (max-width: 640px) {
+/* =========================================================
+   DISEÑO RESPONSIVO MÓVIL (DIFERENCIADO DE COMPUTADORA)
+   ========================================================= */
+@media (max-width: 768px) {
     header {
-        flex-direction: column;
-        align-items: flex-start;
+        padding: 10px 14px;
+        flex-wrap: wrap;
     }
+
+    header h1 {
+        font-size: 1rem;
+    }
+
+    .status-badge {
+        font-size: 0.72rem;
+        padding: 3px 8px;
+    }
+
+    .header-actions {
+        width: 100%;
+        justify-content: space-between;
+        padding-top: 6px;
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    /* En móvil el chat ocupa el 100% de la pantalla sin márgenes externos */
+    #chat-container {
+        margin: 0;
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
+        box-shadow: none;
+    }
+
+    #chat-messages {
+        padding: 12px;
+        gap: 12px;
+    }
+
     .message {
         max-width: 92%;
+        padding: 10px 13px;
+        font-size: 0.92rem;
+    }
+
+    #chat-input-area {
+        padding: 10px;
+        gap: 8px;
+    }
+
+    #user-input {
+        padding: 10px 12px;
+        font-size: 16px; /* Evita zoom automático en iOS */
+    }
+
+    #send-btn {
+        padding: 0 14px;
+    }
+
+    /* Ajustes Admin en móvil */
+    .container {
+        padding: 0 10px;
+        margin: 12px auto;
+    }
+
+    .kpi-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+
+    .kpi-value {
+        font-size: 1.35rem;
+    }
+
+    .kpi-tooltip {
+        width: 200px;
+        left: 0;
+        transform: none;
+    }
+
+    .kpi-tooltip::after {
+        left: 20px;
+    }
+
+    .login-box {
+        margin: 30px 14px;
+        padding: 22px;
     }
 }
