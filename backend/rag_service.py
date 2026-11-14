@@ -40,7 +40,6 @@ def dividir_texto_recursivo(texto: str, tamano_chunk: int = 1000, solapamiento: 
                     chunks_resultado.extend(_split(parte, seps[1:]))
                     actual = ""
                 else:
-                    # Mantener solapamiento con el final del bloque anterior
                     cola_solapada = actual[-solapamiento:] if len(actual) > solapamiento else actual
                     actual = f"{cola_solapada}{sep}{parte}".strip() if cola_solapada else parte
 
@@ -67,7 +66,6 @@ def extraer_texto_de_archivo(ruta_archivo: str) -> str:
         for para in doc.paragraphs:
             if para.text.strip():
                 texto_extraido += para.text + "\n"
-        # También extraer texto de tablas dentro del Word
         for tabla in doc.tables:
             for fila in tabla.rows:
                 celdas = [celda.text.strip() for celda in fila.cells]
@@ -86,10 +84,8 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
     """Procesa documentos o imágenes, genera embeddings en lote y los guarda en Supabase."""
     extension = ruta_archivo.lower().split('.')[-1]
 
-    # Eliminar versión previa si se resube un archivo con el mismo nombre para evitar duplicados
     eliminar_documento_por_fuente(nombre_original)
 
-    # 1. Procesamiento Multimodal para Imágenes
     if extension in ["png", "jpg", "jpeg"]:
         archivo_subido = gemini_client.files.upload(file=ruta_archivo)
         try:
@@ -97,14 +93,13 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
                 model="gemini-3.5-flash-lite",
                 contents=[
                     archivo_subido,
-                    "Extrae y transcribe absolutamente todo el texto visible en esta imagen, incluyendo números de RIF, cédulas, nombres, fechas, montos, direcciones y datos institucionales. Si hay tablas o sellos, descríbelos con exactitud."
+                    "Extrae y transcribe absolutamente todo el texto visible en esta imagen, incluyendo números de RIF, cédulas, nombres, fechas, montos, direcciones y datos operativos. Si hay tablas o sellos, descríbelos con exactitud."
                 ]
             )
             texto_imagen = analisis_imagen.text
         except Exception as e:
             texto_imagen = f"No se pudo extraer texto automático de la imagen ({str(e)})."
         finally:
-            # Limpiar archivo temporal en Google File API
             try:
                 gemini_client.files.delete(name=archivo_subido.name)
             except Exception:
@@ -127,16 +122,14 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
         supabase.table("documents").insert(data).execute()
         return 1
 
-    # 2. Procesamiento por Lotes (Batch) para Documentos de Texto
     texto_completo = extraer_texto_de_archivo(ruta_archivo)
     chunks = dividir_texto_recursivo(texto_completo, tamano_chunk=1000, solapamiento=200)
 
     if not chunks:
-        raise ValueError("El documento está vacío o no contiene texto extraíble (ej. PDF escaneado como imagen).")
+        raise ValueError("El documento está vacío o no contiene texto extraíble.")
 
     textos_con_fuente = [f"[Documento Fuente: {nombre_original}]\n{chunk}" for chunk in chunks]
 
-    # Procesar en lotes de máximo 50 fragmentos para evitar límites de payload
     registros_a_insertar = []
     tamano_lote = 50
 
@@ -165,7 +158,6 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
     historial = historial or []
 
     try:
-        # 1. Obtener inventario general de archivos
         response_meta = supabase.table("documents").select("metadata").execute()
         archivos_unicos = {
             doc.get("metadata", {}).get("fuente")
@@ -174,13 +166,11 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
         }
         inventario_archivos = sorted(list(archivos_unicos))
 
-        # 2. Enriquecer la consulta de búsqueda si hay historial previo
         consulta_busqueda = pregunta
         if historial:
             ultimos_turnos = "\n".join([f"{m.get('rol', 'user')}: {m.get('texto', '')}" for m in historial[-4:]])
             consulta_busqueda = f"{ultimos_turnos}\nPregunta actual: {pregunta}"
 
-        # 3. Generar embedding de la consulta
         embedding_response = gemini_client.models.embed_content(
             model="gemini-embedding-2",
             contents=consulta_busqueda,
@@ -188,7 +178,6 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
         )
         vector_pregunta = embedding_response.embeddings[0].values
 
-        # 4. Búsqueda Híbrida (Reciprocal Rank Fusion) en Supabase
         respuesta_db = supabase.rpc(
             "match_documents_hybrid",
             {
@@ -203,19 +192,17 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
         contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante en los documentos indexados."
         fuentes_usadas = sorted(list({item["metadata"]["fuente"] for item in fragmentos if "fuente" in item.get("metadata", {})}))
 
-        # Calcular similitud promedio para métricas
         similitudes = [item.get("similarity", 0) for item in fragmentos if item.get("similarity") is not None]
         similitud_promedio = round(sum(similitudes) / len(similitudes), 4) if similitudes else 0.0
 
-        # Formatear historial reciente para el prompt
         texto_historial = ""
         if historial:
             lineas_hist = [f"- {'Usuario' if m.get('rol') == 'user' else 'Asistente'}: {m.get('texto', '')}" for m in historial[-4:]]
             texto_historial = "[HISTORIAL RECIENTE DE LA CONVERSACIÓN]:\n" + "\n".join(lineas_hist) + "\n\n"
 
         prompt_final = f"""
-        Eres el Asistente Institucional oficial para el Trabajo de Grado de la Universidad Alejandro de Humboldt (UAH).
-        Analiza el contexto recuperado de los documentos (PDF, Word, Excel e imágenes transcritas) para responder con rigor académico e institucional.
+        Eres el Asistente Corporativo inteligente diseñado exclusivamente para la empresa **Victory Logistic**.
+        Analiza el contexto recuperado de los documentos (PDF, Word, Excel e imágenes transcritas) para asistir al equipo de Victory Logistic con precisión operativa y corporativa.
 
         [INVENTARIO DE ARCHIVOS INDEXADOS]:
         {inventario_archivos}
@@ -226,10 +213,21 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
         [PREGUNTA ACTUAL DEL USUARIO]:
         {pregunta}
 
-        Reglas estrictas de respuesta:
-        1. Basa tu respuesta ÚNICAMENTE en el contexto recuperado y el inventario. Si la información solicitada no aparece en el contexto, indica de forma clara y cortés que no dispones de ese dato en los documentos institucionales cargados. No inventes información.
-        2. Si la respuesta involucra comparar datos, listar múltiples elementos, presentar datos fiscales (RIF, cédulas, fechas, montos) o mostrar inventarios, **estrúcturalo obligatoriamente en una tabla Markdown limpia**.
-        3. Usa **negritas** para resaltar datos clave y mantén un tono formal y preciso.
+        Reglas estrictas de formato y respuesta:
+        1. **Identidad y Rigor:** Responde siempre como el asistente oficial de **Victory Logistic**. Basa tu respuesta ÚNICAMENTE en el contexto recuperado y el inventario. Si el dato no está en los documentos cargados, indícalo con claridad y cortesía sin inventar información.
+        2. **Uso Opcional de Tablas:** NO uses tablas para respuestas simples, definiciones o datos puntuales (como un solo RIF, una dirección o un nombre); en esos casos responde en párrafos claros y directos. Utiliza tablas Markdown **únicamente** cuando el usuario pida una tabla explícitamente o cuando sea necesario comparar múltiples registros, ítems o columnas de datos.
+        3. **Gráficos Estadísticos (Chart.js):** Si el usuario solicita un gráfico (barras, líneas, torta/dona) o si los datos numéricos recuperados se visualizan mejor gráficamente, incluye un bloque de código con la etiqueta `chart` que contenga ÚNICAMENTE un JSON válido compatible con Chart.js:
+           ```chart
+           {{
+             "type": "bar",
+             "data": {{
+               "labels": ["Etiqueta 1", "Etiqueta 2"],
+               "datasets": [{{ "label": "Serie", "data": [10, 20] }}]
+             }}
+           }}
+           ```
+           (Tipos válidos: "bar", "line", "pie", "doughnut". No agregues comentarios dentro del JSON).
+        4. **Diagramas de Flujo o Procesos (Mermaid.js):** Si el usuario solicita un diagrama, flujo de procesos, organigrama o mapa conceptual, incluye un bloque de código con la etiqueta `mermaid` usando sintaxis Mermaid válida (ej. `flowchart TD` o `sequenceDiagram`).
         """
 
         response = gemini_client.models.generate_content(
@@ -239,7 +237,6 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
 
         latencia_ms = int((time.perf_counter() - inicio_tiempo) * 1000)
 
-        # 5. Guardar métrica en Supabase y obtener su ID para permitir feedback (Like/Dislike)
         metric_id = None
         try:
             res_metric = supabase.table("rag_metrics").insert({
