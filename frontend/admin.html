@@ -126,4 +126,236 @@
                         </tr>
                     </thead>
                     <tbody id="tabla-metricas">
-                        <tr><td colspan="5" style="text-align: center
+                        <tr><td colspan="5" style="text-align: center; color: var(--text-secondary);">Sin consultas registradas aún.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = "https://humboldtrag.onrender.com";
+
+        // Sincronizar tema claro/oscuro con el chat
+        (function inicializarTema() {
+            const temaGuardado = localStorage.getItem("vl_theme") || "light";
+            document.documentElement.setAttribute("data-theme", temaGuardado);
+        })();
+
+        function alternarTema() {
+            const actual = document.documentElement.getAttribute("data-theme") || "light";
+            const nuevo = actual === "light" ? "dark" : "light";
+            document.documentElement.setAttribute("data-theme", nuevo);
+            localStorage.setItem("vl_theme", nuevo);
+            actualizarIconoTema();
+        }
+
+        function actualizarIconoTema() {
+            const btn = document.getElementById("theme-btn");
+            if (!btn) return;
+            const tema = document.documentElement.getAttribute("data-theme") || "light";
+            btn.textContent = tema === "dark" ? "☀️" : "🌙";
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            actualizarIconoTema();
+            const tokenGuardado = sessionStorage.getItem("uah_admin_token");
+            if (tokenGuardado) {
+                validarYMostrarPanel(tokenGuardado);
+            }
+        });
+
+        function getAuthHeaders() {
+            const token = sessionStorage.getItem("uah_admin_token");
+            return { "Authorization": `Bearer ${token}` };
+        }
+
+        async function iniciarSesion() {
+            const pwd = document.getElementById("admin-password").value.trim();
+            const errorEl = document.getElementById("login-error");
+            if (!pwd) return;
+
+            errorEl.textContent = "Verificando credenciales...";
+            await validarYMostrarPanel(pwd);
+        }
+
+        async function validarYMostrarPanel(token) {
+            const errorEl = document.getElementById("login-error");
+            try {
+                const res = await fetch(`${API_URL}/admin/verificar`, {
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                if (!res.ok) throw new Error("Credenciales inválidas");
+
+                sessionStorage.setItem("uah_admin_token", token);
+                document.getElementById("login-section").style.display = "none";
+                document.getElementById("admin-content").style.display = "block";
+                document.getElementById("logout-btn").style.display = "inline-block";
+                errorEl.textContent = "";
+                cargarDashboard();
+            } catch {
+                sessionStorage.removeItem("uah_admin_token");
+                errorEl.textContent = "Contraseña incorrecta o servidor no disponible.";
+            }
+        }
+
+        function cerrarSesion() {
+            sessionStorage.removeItem("uah_admin_token");
+            location.reload();
+        }
+
+        async function subirArchivo() {
+            const fileInput = document.getElementById("file-input");
+            const uploadBtn = document.getElementById("upload-btn");
+            const statusDiv = document.getElementById("status-message");
+
+            if (fileInput.files.length === 0) {
+                statusDiv.style.color = "#ef4444";
+                statusDiv.innerText = "Por favor selecciona un archivo primero.";
+                return;
+            }
+
+            const archivo = fileInput.files[0];
+            const formData = new FormData();
+            formData.append("file", archivo);
+
+            uploadBtn.disabled = true;
+            statusDiv.style.color = "var(--brand-accent)";
+            statusDiv.innerText = `Subiendo "${archivo.name}" al servidor...`;
+
+            try {
+                const response = await fetch(`${API_URL}/admin/subir`, {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                    body: formData
+                });
+
+                const resultado = await response.json();
+                if (!response.ok) throw new Error(resultado.detail || "Error al subir el archivo.");
+
+                statusDiv.innerText = resultado.mensaje;
+                fileInput.value = "";
+
+                if (resultado.task_id) {
+                    await monitorearTarea(resultado.task_id, statusDiv, uploadBtn);
+                } else {
+                    uploadBtn.disabled = false;
+                    cargarDashboard();
+                }
+            } catch (error) {
+                console.error(error);
+                statusDiv.style.color = "#ef4444";
+                statusDiv.innerText = `Error: ${error.message}`;
+                uploadBtn.disabled = false;
+            }
+        }
+
+        async function monitorearTarea(taskId, statusDiv, uploadBtn) {
+            const intervalo = setInterval(async () => {
+                try {
+                    const res = await fetch(`${API_URL}/admin/tarea/${taskId}`, {
+                        headers: getAuthHeaders()
+                    });
+                    if (!res.ok) return;
+
+                    const estado = await res.json();
+                    statusDiv.innerText = estado.mensaje;
+
+                    if (estado.status === "completado") {
+                        clearInterval(intervalo);
+                        statusDiv.style.color = "#16a34a";
+                        uploadBtn.disabled = false;
+                        cargarDashboard();
+                    } else if (estado.status === "error") {
+                        clearInterval(intervalo);
+                        statusDiv.style.color = "#ef4444";
+                        uploadBtn.disabled = false;
+                    }
+                } catch (err) {
+                    console.warn("Reintentando consulta de estado...", err);
+                }
+            }, 4000);
+        }
+
+        async function cargarDashboard() {
+            const tbody = document.getElementById("tabla-inventario");
+            const tbodyMetricas = document.getElementById("tabla-metricas");
+
+            try {
+                const response = await fetch(`${API_URL}/admin/documentos/conteo`, {
+                    headers: getAuthHeaders()
+                });
+                if (!response.ok) throw new Error("No se pudo obtener el inventario");
+
+                const data = await response.json();
+
+                document.getElementById("kpi-archivos").textContent = data.total_archivos_subidos ?? 0;
+                document.getElementById("kpi-vectores").textContent = data.total_registros_vectoriales ?? 0;
+                if (data.kpis) {
+                    document.getElementById("kpi-latencia").textContent = `${data.kpis.latencia_promedio_ms} ms`;
+                    document.getElementById("kpi-similitud").textContent = `${data.kpis.similitud_promedio_pct}%`;
+                    document.getElementById("kpi-satisfaccion").textContent =
+                        data.kpis.tasa_satisfaccion_pct !== null ? `${data.kpis.tasa_satisfaccion_pct}%` : "N/A";
+                }
+
+                // Renderizar tabla simplificada: Nombre + Botón Eliminar
+                const archivos = data.archivos || [];
+                if (archivos.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="2" style="text-align: center; color: var(--text-secondary);">No hay archivos indexados en la base de datos.</td></tr>`;
+                } else {
+                    tbody.innerHTML = "";
+                    archivos.forEach(nombreArchivo => {
+                        const tr = document.createElement("tr");
+                        tr.innerHTML = `
+                            <td><b>${nombreArchivo}</b></td>
+                            <td style="text-align: center;">
+                                <button class="danger" onclick="eliminarArchivo('${nombreArchivo.replace(/'/g, "\\'")}')" style="padding: 5px 12px; font-size: 0.8rem;">Eliminar</button>
+                            </td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                }
+
+                // Renderizar auditoría de consultas
+                const consultas = data.ultimas_consultas || [];
+                if (consultas.length > 0) {
+                    tbodyMetricas.innerHTML = "";
+                    consultas.forEach(c => {
+                        const fbIcon = c.feedback === 1 ? "👍 Útil" : (c.feedback === -1 ? "👎 Mejorar" : "—");
+                        const fuentesStr = (c.fuentes_usadas && c.fuentes_usadas.length) ? c.fuentes_usadas.join(", ") : "Ninguna";
+                        const tr = document.createElement("tr");
+                        tr.innerHTML = `
+                            <td>${c.pregunta}</td>
+                            <td>${c.latencia_ms} ms</td>
+                            <td>${(c.similitud_promedio * 100).toFixed(1)}%</td>
+                            <td>${fuentesStr}</td>
+                            <td>${fbIcon}</td>
+                        `;
+                        tbodyMetricas.appendChild(tr);
+                    });
+                }
+            } catch (error) {
+                console.error(error);
+                tbody.innerHTML = `<tr><td colspan="2" style="text-align: center; color: #ef4444;">Error al cargar datos del servidor.</td></tr>`;
+            }
+        }
+
+        async function eliminarArchivo(nombreArchivo) {
+            if (!confirm(`¿Estás seguro de eliminar "${nombreArchivo}" de la base de datos vectorial?`)) return;
+
+            try {
+                const response = await fetch(`${API_URL}/admin/documentos/${encodeURIComponent(nombreArchivo)}`, {
+                    method: "DELETE",
+                    headers: getAuthHeaders()
+                });
+
+                if (!response.ok) throw new Error("Error al eliminar el archivo");
+                cargarDashboard();
+            } catch (error) {
+                console.error(error);
+                alert("Ocurrió un error al intentar eliminar el archivo.");
+            }
+        }
+    </script>
+</body>
+</html>
