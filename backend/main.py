@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -20,10 +20,9 @@ load_dotenv()
 app = FastAPI(
     title="Humboldt RAG Backend Multimodal e Híbrido",
     description="Backend oficial para trabajo de grado - Universidad Alejandro de Humboldt",
-    version="4.0"
+    version="4.1"
 )
 
-# CORS restringido exclusivamente al frontend en Vercel (y localhost para pruebas)
 ALLOWED_ORIGINS = [
     "https://humboldtrag-frontend.vercel.app",
     "http://localhost:5500",
@@ -39,6 +38,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Registro en memoria del estado de tareas de indexación en curso
+estado_tareas: dict[str, dict] = {}
+
 
 def verificar_admin(authorization: Optional[str] = Header(None)):
     """Valida el token secreto de administrador enviado en el header Authorization."""
@@ -50,6 +52,28 @@ def verificar_admin(authorization: Optional[str] = Header(None)):
     token = authorization.replace("Bearer ", "").strip()
     if token != admin_secret:
         raise HTTPException(status_code=403, detail="Contraseña de administrador incorrecta.")
+
+
+def tarea_indexar_en_segundo_plano(task_id: str, ruta_temporal: str, nombre_original: str):
+    """Ejecuta la vectorización sin bloquear la petición HTTP y limpia el archivo temporal."""
+    try:
+        estado_tareas[task_id] = {
+            "status": "procesando",
+            "mensaje": f"Indexando '{nombre_original}' en lotes (respetando cuota IA)..."
+        }
+        total_unidades = procesar_y_guardar_archivo(ruta_temporal, nombre_original)
+        estado_tareas[task_id] = {
+            "status": "completado",
+            "mensaje": f"¡Éxito! '{nombre_original}' indexado completamente ({total_unidades} fragmentos vectoriales)."
+        }
+    except Exception as e:
+        estado_tareas[task_id] = {
+            "status": "error",
+            "mensaje": f"Error al procesar '{nombre_original}': {str(e)}"
+        }
+    finally:
+        if os.path.exists(ruta_temporal):
+            os.remove(ruta_temporal)
 
 
 class MensajeHistorial(BaseModel):
@@ -64,7 +88,7 @@ class QueryRequest(BaseModel):
 
 class FeedbackRequest(BaseModel):
     metric_id: int
-    feedback: int  # 1 o -1
+    feedback: int
 
 
 @app.post("/chat")
@@ -95,26 +119,35 @@ def verificar_sesion_admin():
 
 
 @app.post("/admin/subir", dependencies=[Depends(verificar_admin)])
-async def subir_archivo(file: UploadFile = File(...)):
+async def subir_archivo(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     extension = file.filename.lower().split('.')[-1]
     if extension not in ["pdf", "docx", "xlsx", "png", "jpg", "jpeg"]:
         raise HTTPException(status_code=400, detail="Formato no soportado. Use PDF, DOCX, XLSX, PNG o JPG.")
 
-    ruta_temporal = f"temp_{uuid.uuid4().hex}_{file.filename}"
+    task_id = uuid.uuid4().hex
+    ruta_temporal = f"temp_{task_id}_{file.filename}"
     with open(ruta_temporal, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    try:
-        total_unidades = procesar_y_guardar_archivo(ruta_temporal, file.filename)
-        return {
-            "status": "success",
-            "mensaje": f"Archivo '{file.filename}' indexado exitosamente ({total_unidades} fragmentos vectoriales)."
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if os.path.exists(ruta_temporal):
-            os.remove(ruta_temporal)
+    estado_tareas[task_id] = {
+        "status": "procesando",
+        "mensaje": f"Archivo '{file.filename}' recibido. Iniciando indexación..."
+    }
+    background_tasks.add_task(tarea_indexar_en_segundo_plano, task_id, ruta_temporal, file.filename)
+
+    return {
+        "status": "accepted",
+        "task_id": task_id,
+        "mensaje": f"Procesando '{file.filename}' en segundo plano..."
+    }
+
+
+@app.get("/admin/tarea/{task_id}", dependencies=[Depends(verificar_admin)])
+def consultar_estado_tarea(task_id: str):
+    tarea = estado_tareas.get(task_id)
+    if not tarea:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada.")
+    return tarea
 
 
 @app.delete("/admin/documentos/{nombre_archivo}", dependencies=[Depends(verificar_admin)])
@@ -137,4 +170,4 @@ def obtener_conteo_documentos():
 
 @app.get("/")
 def root():
-    return {"status": "Backend Humboldt RAG v4.0 operando en Render"}
+    return {"status": "Backend Humboldt RAG v4.1 operando en Render"}
