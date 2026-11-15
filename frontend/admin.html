@@ -1,72 +1,129 @@
-async function subirArchivo() {
-            const fileInput = document.getElementById("file-input");
-            const uploadBtn = document.getElementById("upload-btn");
-            const statusDiv = document.getElementById("status-message");
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Administración - Victory Logistic</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
 
-            if (fileInput.files.length === 0) {
-                statusDiv.style.color = "#ef4444";
-                statusDiv.innerText = "Por favor selecciona un archivo primero.";
-                return;
-            }
+    <header>
+        <div class="header-left">
+            <h1>Victory Logistic · Panel de Administración</h1>
+        </div>
+        <div class="header-actions">
+            <button class="theme-toggle" id="theme-btn" onclick="alternarTema()" title="Cambiar modo claro/oscuro">🌙</button>
+            <button id="logout-btn" class="secondary" onclick="cerrarSesion()" style="display: none; padding: 6px 12px; font-size: 0.82rem;">Cerrar Sesión</button>
+            <a href="index.html">← Volver al Chat</a>
+        </div>
+    </header>
 
-            const archivo = fileInput.files[0];
-            const formData = new FormData();
-            formData.append("file", archivo);
+    <!-- Pantalla de Autenticación -->
+    <div id="login-section" class="login-box">
+        <h2 style="margin-bottom: 8px;">Acceso Administrativo</h2>
+        <p style="font-size: 0.9rem; color: var(--text-secondary);">Ingresa la clave de administrador de <strong>Victory Logistic</strong> para gestionar la base documental.</p>
+        <input type="password" id="admin-password" placeholder="Contraseña de administrador..." onkeypress="if(event.key==='Enter') iniciarSesion()">
+        <button onclick="iniciarSesion()" style="width: 100%;">Ingresar al Panel</button>
+        <p id="login-error" style="color: #ef4444; font-size: 0.85rem; margin-top: 10px;"></p>
+    </div>
 
-            uploadBtn.disabled = true;
-            statusDiv.style.color = "var(--brand-accent)";
-            statusDiv.innerText = `Subiendo "${archivo.name}" al servidor...`;
+    <!-- Contenido Protegido del Administrador -->
+    <div id="admin-content" class="container" style="display: none;">
 
-            try {
-                const response = await fetch(`${API_URL}/admin/subir`, {
-                    method: "POST",
-                    headers: getAuthHeaders(),
-                    body: formData
-                });
+        <!-- KPIs con Descripciones al pasar el mouse -->
+        <div class="kpi-grid">
+            <div class="kpi-card" tabindex="0">
+                <div class="kpi-header">
+                    <span class="kpi-label">Archivos Indexados</span>
+                    <span class="kpi-info-icon">i</span>
+                </div>
+                <div class="kpi-value" id="kpi-archivos">0</div>
+                <div class="kpi-tooltip">Cantidad total de documentos únicos (PDF, Word, Excel e imágenes) cargados actualmente en la base de conocimiento de Victory Logistic.</div>
+            </div>
 
-                const resultado = await response.json();
-                if (!response.ok) throw new Error(resultado.detail || "Error al subir el archivo.");
+            <div class="kpi-card" tabindex="0">
+                <div class="kpi-header">
+                    <span class="kpi-label">Vectores en Supabase</span>
+                    <span class="kpi-info-icon">i</span>
+                </div>
+                <div class="kpi-value" id="kpi-vectores">0</div>
+                <div class="kpi-tooltip">Número total de fragmentos semánticos (embeddings de 768 dimensiones) almacenados para la búsqueda híbrida vectorial y por palabras clave.</div>
+            </div>
 
-                statusDiv.innerText = resultado.mensaje;
-                fileInput.value = "";
+            <div class="kpi-card" tabindex="0">
+                <div class="kpi-header">
+                    <span class="kpi-label">Latencia Media</span>
+                    <span class="kpi-info-icon">i</span>
+                </div>
+                <div class="kpi-value" id="kpi-latencia">0 ms</div>
+                <div class="kpi-tooltip">Tiempo promedio de respuesta del sistema (en milisegundos) desde que el usuario envía la consulta hasta que se genera la respuesta final.</div>
+            </div>
 
-                if (resultado.task_id) {
-                    await monitorearTarea(resultado.task_id, statusDiv, uploadBtn);
-                } else {
-                    uploadBtn.disabled = false;
-                    cargarDashboard();
-                }
-            } catch (error) {
-                console.error(error);
-                statusDiv.style.color = "#ef4444";
-                statusDiv.innerText = `Error: ${error.message}`;
-                uploadBtn.disabled = false;
-            }
-        }
+            <div class="kpi-card" tabindex="0">
+                <div class="kpi-header">
+                    <span class="kpi-label">Similitud Promedio</span>
+                    <span class="kpi-info-icon">i</span>
+                </div>
+                <div class="kpi-value" id="kpi-similitud">0%</div>
+                <div class="kpi-tooltip">Porcentaje medio de similitud coseno entre las preguntas realizadas y los fragmentos recuperados; mide qué tan relevante es la información encontrada.</div>
+            </div>
 
-        async function monitorearTarea(taskId, statusDiv, uploadBtn) {
-            const intervalo = setInterval(async () => {
-                try {
-                    const res = await fetch(`${API_URL}/admin/tarea/${taskId}`, {
-                        headers: getAuthHeaders()
-                    });
-                    if (!res.ok) return;
+            <div class="kpi-card" tabindex="0">
+                <div class="kpi-header">
+                    <span class="kpi-label">Satisfacción (👍)</span>
+                    <span class="kpi-info-icon">i</span>
+                </div>
+                <div class="kpi-value" id="kpi-satisfaccion">N/A</div>
+                <div class="kpi-tooltip">Porcentaje de respuestas calificadas positivamente (👍 Útil) por los usuarios frente al total de respuestas evaluadas en el chat.</div>
+            </div>
+        </div>
 
-                    const estado = await res.json();
-                    statusDiv.innerText = estado.mensaje;
+        <!-- Carga de Documentos -->
+        <div class="card">
+            <h2>Subir Nuevo Documento o Imagen</h2>
+            <div class="upload-area">
+                <input type="file" id="file-input" accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg" style="margin-bottom: 12px; max-width: 100%;">
+                <br>
+                <button id="upload-btn" onclick="subirArchivo()">Proteger e Indexar Archivo</button>
+            </div>
+            <div id="status-message" style="margin-top: 12px; font-size: 0.9rem; font-weight: 500;"></div>
+        </div>
 
-                    if (estado.status === "completado") {
-                        clearInterval(intervalo);
-                        statusDiv.style.color = "#16a34a";
-                        uploadBtn.disabled = false;
-                        cargarDashboard();
-                    } else if (estado.status === "error") {
-                        clearInterval(intervalo);
-                        statusDiv.style.color = "#ef4444";
-                        uploadBtn.disabled = false;
-                    }
-                } catch (err) {
-                    console.warn("Reintentando consulta de estado...", err);
-                }
-            }, 4000);
-        }
+        <!-- Inventario Simplificado (Sin columna de Estado) -->
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 10px; flex-wrap: wrap;">
+                <h2 style="margin: 0; border: none;">Inventario de Archivos Indexados</h2>
+                <button onclick="cargarDashboard()" style="font-size: 0.82rem; padding: 6px 12px;">Actualizar Datos</button>
+            </div>
+            <div style="overflow-x: auto;">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Nombre del Archivo</th>
+                            <th style="width: 120px; text-align: center;">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-inventario">
+                        <tr><td colspan="2" style="text-align: center; color: var(--text-secondary);">Cargando inventario...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Registro de Últimas Consultas -->
+        <div class="card">
+            <h2>Auditoría de Últimas Consultas</h2>
+            <div style="overflow-x: auto;">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Pregunta</th>
+                            <th>Latencia</th>
+                            <th>Similitud</th>
+                            <th>Fuentes</th>
+                            <th>Feedback</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-metricas">
+                        <tr><td colspan="5" style="text-align: center
