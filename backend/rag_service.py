@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import pypdf
 import docx
@@ -51,7 +52,7 @@ def dividir_texto_recursivo(texto: str, tamano_chunk: int = 1000, solapamiento: 
 
 
 def extraer_texto_de_archivo(ruta_archivo: str) -> str:
-    """Extrae texto plano de archivos PDF, Word o todas las hojas de Excel."""
+    """Extrae texto limpio de archivos PDF, Word o todas las hojas de Excel sin espacios basura."""
     extension = ruta_archivo.lower().split('.')[-1]
     texto_extraido = ""
 
@@ -68,20 +69,52 @@ def extraer_texto_de_archivo(ruta_archivo: str) -> str:
                 texto_extraido += para.text + "\n"
         for tabla in doc.tables:
             for fila in tabla.rows:
-                celdas = [celda.text.strip() for celda in fila.cells]
-                texto_extraido += " | ".join(celdas) + "\n"
+                celdas = [celda.text.strip() for celda in fila.cells if celda.text.strip()]
+                if celdas:
+                    texto_extraido += " | ".join(celdas) + "\n"
     elif extension == "xlsx":
         hojas = pd.read_excel(ruta_archivo, sheet_name=None)
         for nombre_hoja, df in hojas.items():
-            texto_extraido += f"\n--- Hoja: {nombre_hoja} ---\n{df.to_string(index=False)}\n"
+            # Eliminar filas y columnas completamente vacías para no gastar tokens en celdas NaN
+            df_limpio = df.dropna(how="all").dropna(axis=1, how="all").fillna("")
+            if df_limpio.empty:
+                continue
+            texto_extraido += f"\n--- Hoja: {nombre_hoja} ---\n"
+            columnas = [str(c).strip() for c in df_limpio.columns]
+            texto_extraido += " | ".join(columnas) + "\n"
+            for _, fila in df_limpio.iterrows():
+                valores = [str(v).strip() for v in fila.values if str(v).strip() != ""]
+                if valores:
+                    texto_extraido += " | ".join(valores) + "\n"
     else:
         raise ValueError(f"Formato .{extension} no compatible.")
 
     return texto_extraido
 
 
+def generar_embeddings_con_reintento(textos: list[str], max_reintentos: int = 4):
+    """Genera embeddings respetando el límite de 30,000 tokens/minuto del Free Tier con espera automática."""
+    for intento in range(max_reintentos):
+        try:
+            return gemini_client.models.embed_content(
+                model="gemini-embedding-2",
+                contents=textos,
+                config=types.EmbedContentConfig(output_dimensionality=768)
+            )
+        except Exception as e:
+            mensaje_error = str(e)
+            if "429" in mensaje_error or "RESOURCE_EXHAUSTED" in mensaje_error:
+                # Extraer tiempo de espera sugerido por Google (ej. "retry in 27.9s") o usar 30s por defecto
+                match_segundos = re.search(r"retry in (\d+(?:\.\d+)?)s", mensaje_error, re.IGNORECASE)
+                espera = float(match_segundos.group(1)) + 2.0 if match_segundos else 32.0
+                if intento < max_reintentos - 1:
+                    time.sleep(espera)
+                    continue
+            raise e
+
+
 def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
-    """Procesa documentos o imágenes, genera embeddings en lote y los guarda en Supabase."""
+    """Procesa documentos o imágenes, genera embeddings controlando cuota y los guarda en Supabase."""
     extension = ruta_archivo.lower().split('.')[-1]
 
     eliminar_documento_por_fuente(nombre_original)
@@ -107,11 +140,7 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
 
         contenido_completo = f"[Documento Multimedia/Imagen Fuente: {nombre_original}]\nContenido extraído:\n{texto_imagen}"
 
-        embedding_response = gemini_client.models.embed_content(
-            model="gemini-embedding-2",
-            contents=contenido_completo,
-            config=types.EmbedContentConfig(output_dimensionality=768)
-        )
+        embedding_response = generar_embeddings_con_reintento([contenido_completo])
         vector = embedding_response.embeddings[0].values
 
         data = {
@@ -130,16 +159,14 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
 
     textos_con_fuente = [f"[Documento Fuente: {nombre_original}]\n{chunk}" for chunk in chunks]
 
+    # Lotes pequeños de 15 chunks (~4,500 tokens por lote) para no saturar el límite de 30k tokens/min
     registros_a_insertar = []
-    tamano_lote = 50
+    tamano_lote = 15
 
     for inicio in range(0, len(textos_con_fuente), tamano_lote):
         lote_textos = textos_con_fuente[inicio:inicio + tamano_lote]
-        embedding_response = gemini_client.models.embed_content(
-            model="gemini-embedding-2",
-            contents=lote_textos,
-            config=types.EmbedContentConfig(output_dimensionality=768)
-        )
+        embedding_response = generar_embeddings_con_reintento(lote_textos)
+
         for idx, emb_obj in enumerate(embedding_response.embeddings):
             indice_global = inicio + idx
             registros_a_insertar.append({
@@ -148,7 +175,14 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
                 "embedding": emb_obj.values
             })
 
-    supabase.table("documents").insert(registros_a_insertar).execute()
+        # Pausa breve entre lotes si el documento es muy extenso
+        if inicio + tamano_lote < len(textos_con_fuente):
+            time.sleep(2.5)
+
+    # Insertar en Supabase en bloques de 100 registros
+    for i in range(0, len(registros_a_insertar), 100):
+        supabase.table("documents").insert(registros_a_insertar[i:i + 100]).execute()
+
     return len(registros_a_insertar)
 
 
@@ -171,11 +205,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
             ultimos_turnos = "\n".join([f"{m.get('rol', 'user')}: {m.get('texto', '')}" for m in historial[-4:]])
             consulta_busqueda = f"{ultimos_turnos}\nPregunta actual: {pregunta}"
 
-        embedding_response = gemini_client.models.embed_content(
-            model="gemini-embedding-2",
-            contents=consulta_busqueda,
-            config=types.EmbedContentConfig(output_dimensionality=768)
-        )
+        embedding_response = generar_embeddings_con_reintento([consulta_busqueda])
         vector_pregunta = embedding_response.embeddings[0].values
 
         # Búsqueda Híbrida con respaldo vectorial automático
