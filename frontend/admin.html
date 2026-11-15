@@ -1,210 +1,4 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Administración - Victory Logistic</title>
-    <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-
-    <header>
-        <div class="header-left">
-            <h1>Victory Logistic · Panel de Administración</h1>
-        </div>
-        <div class="header-actions">
-            <button class="theme-toggle" id="theme-btn" onclick="alternarTema()" title="Cambiar modo claro/oscuro">🌙</button>
-            <button id="logout-btn" class="secondary" onclick="cerrarSesion()" style="display: none; padding: 6px 12px; font-size: 0.82rem;">Cerrar Sesión</button>
-            <a href="index.html">← Volver al Chat</a>
-        </div>
-    </header>
-
-    <!-- Pantalla de Autenticación -->
-    <div id="login-section" class="login-box">
-        <h2 style="margin-bottom: 8px;">Acceso Administrativo</h2>
-        <p style="font-size: 0.9rem; color: var(--text-secondary);">Ingresa la clave de administrador de <strong>Victory Logistic</strong> para gestionar la base documental.</p>
-        <input type="password" id="admin-password" placeholder="Contraseña de administrador..." onkeypress="if(event.key==='Enter') iniciarSesion()">
-        <button onclick="iniciarSesion()" style="width: 100%;">Ingresar al Panel</button>
-        <p id="login-error" style="color: #ef4444; font-size: 0.85rem; margin-top: 10px;"></p>
-    </div>
-
-    <!-- Contenido Protegido del Administrador -->
-    <div id="admin-content" class="container" style="display: none;">
-
-        <!-- KPIs con Descripciones al pasar el mouse -->
-        <div class="kpi-grid">
-            <div class="kpi-card" tabindex="0">
-                <div class="kpi-header">
-                    <span class="kpi-label">Archivos Indexados</span>
-                    <span class="kpi-info-icon">i</span>
-                </div>
-                <div class="kpi-value" id="kpi-archivos">0</div>
-                <div class="kpi-tooltip">Cantidad total de documentos únicos (PDF, Word, Excel e imágenes) cargados actualmente en la base de conocimiento de Victory Logistic.</div>
-            </div>
-
-            <div class="kpi-card" tabindex="0">
-                <div class="kpi-header">
-                    <span class="kpi-label">Vectores en Supabase</span>
-                    <span class="kpi-info-icon">i</span>
-                </div>
-                <div class="kpi-value" id="kpi-vectores">0</div>
-                <div class="kpi-tooltip">Número total de fragmentos semánticos (embeddings de 768 dimensiones) almacenados para la búsqueda híbrida vectorial y por palabras clave.</div>
-            </div>
-
-            <div class="kpi-card" tabindex="0">
-                <div class="kpi-header">
-                    <span class="kpi-label">Latencia Media</span>
-                    <span class="kpi-info-icon">i</span>
-                </div>
-                <div class="kpi-value" id="kpi-latencia">0 ms</div>
-                <div class="kpi-tooltip">Tiempo promedio de respuesta del sistema (en milisegundos) desde que el usuario envía la consulta hasta que se genera la respuesta final.</div>
-            </div>
-
-            <div class="kpi-card" tabindex="0">
-                <div class="kpi-header">
-                    <span class="kpi-label">Similitud Promedio</span>
-                    <span class="kpi-info-icon">i</span>
-                </div>
-                <div class="kpi-value" id="kpi-similitud">0%</div>
-                <div class="kpi-tooltip">Porcentaje medio de similitud coseno entre las preguntas realizadas y los fragmentos recuperados; mide qué tan relevante es la información encontrada.</div>
-            </div>
-
-            <div class="kpi-card" tabindex="0">
-                <div class="kpi-header">
-                    <span class="kpi-label">Satisfacción (👍)</span>
-                    <span class="kpi-info-icon">i</span>
-                </div>
-                <div class="kpi-value" id="kpi-satisfaccion">N/A</div>
-                <div class="kpi-tooltip">Porcentaje de respuestas calificadas positivamente (👍 Útil) por los usuarios frente al total de respuestas evaluadas en el chat.</div>
-            </div>
-        </div>
-
-        <!-- Carga de Documentos -->
-        <div class="card">
-            <h2>Subir Nuevo Documento o Imagen</h2>
-            <div class="upload-area">
-                <input type="file" id="file-input" accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg" style="margin-bottom: 12px; max-width: 100%;">
-                <br>
-                <button id="upload-btn" onclick="subirArchivo()">Proteger e Indexar Archivo</button>
-            </div>
-            <div id="status-message" style="margin-top: 12px; font-size: 0.9rem; font-weight: 500;"></div>
-        </div>
-
-        <!-- Inventario Simplificado (Sin columna de Estado) -->
-        <div class="card">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 10px; flex-wrap: wrap;">
-                <h2 style="margin: 0; border: none;">Inventario de Archivos Indexados</h2>
-                <button onclick="cargarDashboard()" style="font-size: 0.82rem; padding: 6px 12px;">Actualizar Datos</button>
-            </div>
-            <div style="overflow-x: auto;">
-                <table class="admin-table">
-                    <thead>
-                        <tr>
-                            <th>Nombre del Archivo</th>
-                            <th style="width: 120px; text-align: center;">Acción</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tabla-inventario">
-                        <tr><td colspan="2" style="text-align: center; color: var(--text-secondary);">Cargando inventario...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Registro de Últimas Consultas -->
-        <div class="card">
-            <h2>Auditoría de Últimas Consultas</h2>
-            <div style="overflow-x: auto;">
-                <table class="admin-table">
-                    <thead>
-                        <tr>
-                            <th>Pregunta</th>
-                            <th>Latencia</th>
-                            <th>Similitud</th>
-                            <th>Fuentes</th>
-                            <th>Feedback</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tabla-metricas">
-                        <tr><td colspan="5" style="text-align: center; color: var(--text-secondary);">Sin consultas registradas aún.</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        const API_URL = "https://humboldtrag.onrender.com";
-
-        // Sincronizar tema claro/oscuro con el chat
-        (function inicializarTema() {
-            const temaGuardado = localStorage.getItem("vl_theme") || "light";
-            document.documentElement.setAttribute("data-theme", temaGuardado);
-        })();
-
-        function alternarTema() {
-            const actual = document.documentElement.getAttribute("data-theme") || "light";
-            const nuevo = actual === "light" ? "dark" : "light";
-            document.documentElement.setAttribute("data-theme", nuevo);
-            localStorage.setItem("vl_theme", nuevo);
-            actualizarIconoTema();
-        }
-
-        function actualizarIconoTema() {
-            const btn = document.getElementById("theme-btn");
-            if (!btn) return;
-            const tema = document.documentElement.getAttribute("data-theme") || "light";
-            btn.textContent = tema === "dark" ? "☀️" : "🌙";
-        }
-
-        document.addEventListener("DOMContentLoaded", () => {
-            actualizarIconoTema();
-            const tokenGuardado = sessionStorage.getItem("uah_admin_token");
-            if (tokenGuardado) {
-                validarYMostrarPanel(tokenGuardado);
-            }
-        });
-
-        function getAuthHeaders() {
-            const token = sessionStorage.getItem("uah_admin_token");
-            return { "Authorization": `Bearer ${token}` };
-        }
-
-        async function iniciarSesion() {
-            const pwd = document.getElementById("admin-password").value.trim();
-            const errorEl = document.getElementById("login-error");
-            if (!pwd) return;
-
-            errorEl.textContent = "Verificando credenciales...";
-            await validarYMostrarPanel(pwd);
-        }
-
-        async function validarYMostrarPanel(token) {
-            const errorEl = document.getElementById("login-error");
-            try {
-                const res = await fetch(`${API_URL}/admin/verificar`, {
-                    headers: { "Authorization": `Bearer ${token}` }
-                });
-                if (!res.ok) throw new Error("Credenciales inválidas");
-
-                sessionStorage.setItem("uah_admin_token", token);
-                document.getElementById("login-section").style.display = "none";
-                document.getElementById("admin-content").style.display = "block";
-                document.getElementById("logout-btn").style.display = "inline-block";
-                errorEl.textContent = "";
-                cargarDashboard();
-            } catch {
-                sessionStorage.removeItem("uah_admin_token");
-                errorEl.textContent = "Contraseña incorrecta o servidor no disponible.";
-            }
-        }
-
-        function cerrarSesion() {
-            sessionStorage.removeItem("uah_admin_token");
-            location.reload();
-        }
-
-        async function subirArchivo() {
+async function subirArchivo() {
             const fileInput = document.getElementById("file-input");
             const uploadBtn = document.getElementById("upload-btn");
             const statusDiv = document.getElementById("status-message");
@@ -221,7 +15,7 @@
 
             uploadBtn.disabled = true;
             statusDiv.style.color = "var(--brand-accent)";
-            statusDiv.innerText = `Procesando e indexando "${archivo.name}" por lotes...`;
+            statusDiv.innerText = `Subiendo "${archivo.name}" al servidor...`;
 
             try {
                 const response = await fetch(`${API_URL}/admin/subir`, {
@@ -231,100 +25,48 @@
                 });
 
                 const resultado = await response.json();
-                if (!response.ok) throw new Error(resultado.detail || "Error al procesar el archivo.");
+                if (!response.ok) throw new Error(resultado.detail || "Error al subir el archivo.");
 
-                statusDiv.style.color = "#16a34a";
-                statusDiv.innerText = `¡Éxito! ${resultado.mensaje}`;
+                statusDiv.innerText = resultado.mensaje;
                 fileInput.value = "";
-                cargarDashboard();
+
+                if (resultado.task_id) {
+                    await monitorearTarea(resultado.task_id, statusDiv, uploadBtn);
+                } else {
+                    uploadBtn.disabled = false;
+                    cargarDashboard();
+                }
             } catch (error) {
                 console.error(error);
                 statusDiv.style.color = "#ef4444";
                 statusDiv.innerText = `Error: ${error.message}`;
-            } finally {
                 uploadBtn.disabled = false;
             }
         }
 
-        async function cargarDashboard() {
-            const tbody = document.getElementById("tabla-inventario");
-            const tbodyMetricas = document.getElementById("tabla-metricas");
-
-            try {
-                const response = await fetch(`${API_URL}/admin/documentos/conteo`, {
-                    headers: getAuthHeaders()
-                });
-                if (!response.ok) throw new Error("No se pudo obtener el inventario");
-
-                const data = await response.json();
-
-                document.getElementById("kpi-archivos").textContent = data.total_archivos_subidos ?? 0;
-                document.getElementById("kpi-vectores").textContent = data.total_registros_vectoriales ?? 0;
-                if (data.kpis) {
-                    document.getElementById("kpi-latencia").textContent = `${data.kpis.latencia_promedio_ms} ms`;
-                    document.getElementById("kpi-similitud").textContent = `${data.kpis.similitud_promedio_pct}%`;
-                    document.getElementById("kpi-satisfaccion").textContent =
-                        data.kpis.tasa_satisfaccion_pct !== null ? `${data.kpis.tasa_satisfaccion_pct}%` : "N/A";
-                }
-
-                // Renderizar tabla simplificada: Nombre + Botón Eliminar
-                const archivos = data.archivos || [];
-                if (archivos.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="2" style="text-align: center; color: var(--text-secondary);">No hay archivos indexados en la base de datos.</td></tr>`;
-                } else {
-                    tbody.innerHTML = "";
-                    archivos.forEach(nombreArchivo => {
-                        const tr = document.createElement("tr");
-                        tr.innerHTML = `
-                            <td><b>${nombreArchivo}</b></td>
-                            <td style="text-align: center;">
-                                <button class="danger" onclick="eliminarArchivo('${nombreArchivo.replace(/'/g, "\\'")}')" style="padding: 5px 12px; font-size: 0.8rem;">Eliminar</button>
-                            </td>
-                        `;
-                        tbody.appendChild(tr);
+        async function monitorearTarea(taskId, statusDiv, uploadBtn) {
+            const intervalo = setInterval(async () => {
+                try {
+                    const res = await fetch(`${API_URL}/admin/tarea/${taskId}`, {
+                        headers: getAuthHeaders()
                     });
+                    if (!res.ok) return;
+
+                    const estado = await res.json();
+                    statusDiv.innerText = estado.mensaje;
+
+                    if (estado.status === "completado") {
+                        clearInterval(intervalo);
+                        statusDiv.style.color = "#16a34a";
+                        uploadBtn.disabled = false;
+                        cargarDashboard();
+                    } else if (estado.status === "error") {
+                        clearInterval(intervalo);
+                        statusDiv.style.color = "#ef4444";
+                        uploadBtn.disabled = false;
+                    }
+                } catch (err) {
+                    console.warn("Reintentando consulta de estado...", err);
                 }
-
-                // Renderizar auditoría de consultas
-                const consultas = data.ultimas_consultas || [];
-                if (consultas.length > 0) {
-                    tbodyMetricas.innerHTML = "";
-                    consultas.forEach(c => {
-                        const fbIcon = c.feedback === 1 ? "👍 Útil" : (c.feedback === -1 ? "👎 Mejorar" : "—");
-                        const fuentesStr = (c.fuentes_usadas && c.fuentes_usadas.length) ? c.fuentes_usadas.join(", ") : "Ninguna";
-                        const tr = document.createElement("tr");
-                        tr.innerHTML = `
-                            <td>${c.pregunta}</td>
-                            <td>${c.latencia_ms} ms</td>
-                            <td>${(c.similitud_promedio * 100).toFixed(1)}%</td>
-                            <td>${fuentesStr}</td>
-                            <td>${fbIcon}</td>
-                        `;
-                        tbodyMetricas.appendChild(tr);
-                    });
-                }
-            } catch (error) {
-                console.error(error);
-                tbody.innerHTML = `<tr><td colspan="2" style="text-align: center; color: #ef4444;">Error al cargar datos del servidor.</td></tr>`;
-            }
+            }, 4000);
         }
-
-        async function eliminarArchivo(nombreArchivo) {
-            if (!confirm(`¿Estás seguro de eliminar "${nombreArchivo}" de la base de datos vectorial?`)) return;
-
-            try {
-                const response = await fetch(`${API_URL}/admin/documentos/${encodeURIComponent(nombreArchivo)}`, {
-                    method: "DELETE",
-                    headers: getAuthHeaders()
-                });
-
-                if (!response.ok) throw new Error("Error al eliminar el archivo");
-                cargarDashboard();
-            } catch (error) {
-                console.error(error);
-                alert("Ocurrió un error al intentar eliminar el archivo.");
-            }
-        }
-    </script>
-</body>
-</html>
