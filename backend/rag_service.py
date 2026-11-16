@@ -51,18 +51,24 @@ def dividir_texto_recursivo(texto: str, tamano_chunk: int = 1000, solapamiento: 
     return _split(texto, separadores)
 
 
-def extraer_texto_de_archivo(ruta_archivo: str) -> str:
-    """Extrae texto limpio de archivos PDF, Word o todas las hojas de Excel sin espacios basura."""
+def extraer_unidades_de_archivo(ruta_archivo: str) -> list[tuple[str | None, str]]:
+    """
+    Extrae el texto del archivo devolviendo una lista de tuplas (nombre_hoja, texto).
+    Para PDF y Word, nombre_hoja es None. Para Excel, devuelve cada hoja por separado con su nombre exacto.
+    """
     extension = ruta_archivo.lower().split('.')[-1]
-    texto_extraido = ""
 
     if extension == "pdf":
+        texto_extraido = ""
         reader = pypdf.PdfReader(ruta_archivo)
         for num_pag, pagina in enumerate(reader.pages, start=1):
             contenido_pag = pagina.extract_text() or ""
             if contenido_pag.strip():
                 texto_extraido += f"\n--- Página {num_pag} ---\n{contenido_pag}\n"
+        return [(None, texto_extraido)]
+
     elif extension == "docx":
+        texto_extraido = ""
         doc = docx.Document(ruta_archivo)
         for para in doc.paragraphs:
             if para.text.strip():
@@ -72,24 +78,28 @@ def extraer_texto_de_archivo(ruta_archivo: str) -> str:
                 celdas = [celda.text.strip() for celda in fila.cells if celda.text.strip()]
                 if celdas:
                     texto_extraido += " | ".join(celdas) + "\n"
+        return [(None, texto_extraido)]
+
     elif extension == "xlsx":
         hojas = pd.read_excel(ruta_archivo, sheet_name=None)
+        unidades_hojas = []
         for nombre_hoja, df in hojas.items():
-            # Eliminar filas y columnas completamente vacías para no gastar tokens en celdas NaN
             df_limpio = df.dropna(how="all").dropna(axis=1, how="all").fillna("")
             if df_limpio.empty:
                 continue
-            texto_extraido += f"\n--- Hoja: {nombre_hoja} ---\n"
+            nombre_hoja_limpio = str(nombre_hoja).strip()
+            texto_hoja = f"Hoja de Excel: {nombre_hoja_limpio}\n"
             columnas = [str(c).strip() for c in df_limpio.columns]
-            texto_extraido += " | ".join(columnas) + "\n"
+            texto_hoja += " | ".join(columnas) + "\n"
             for _, fila in df_limpio.iterrows():
                 valores = [str(v).strip() for v in fila.values if str(v).strip() != ""]
                 if valores:
-                    texto_extraido += " | ".join(valores) + "\n"
+                    texto_hoja += " | ".join(valores) + "\n"
+            unidades_hojas.append((nombre_hoja_limpio, texto_hoja))
+        return unidades_hojas
+
     else:
         raise ValueError(f"Formato .{extension} no compatible.")
-
-    return texto_extraido
 
 
 def generar_embeddings_con_reintento(textos: list[str], max_reintentos: int = 4):
@@ -104,7 +114,6 @@ def generar_embeddings_con_reintento(textos: list[str], max_reintentos: int = 4)
         except Exception as e:
             mensaje_error = str(e)
             if "429" in mensaje_error or "RESOURCE_EXHAUSTED" in mensaje_error:
-                # Extraer tiempo de espera sugerido por Google (ej. "retry in 27.9s") o usar 30s por defecto
                 match_segundos = re.search(r"retry in (\d+(?:\.\d+)?)s", mensaje_error, re.IGNORECASE)
                 espera = float(match_segundos.group(1)) + 2.0 if match_segundos else 32.0
                 if intento < max_reintentos - 1:
@@ -114,7 +123,7 @@ def generar_embeddings_con_reintento(textos: list[str], max_reintentos: int = 4)
 
 
 def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
-    """Procesa documentos o imágenes, genera embeddings controlando cuota y los guarda en Supabase."""
+    """Procesa documentos o imágenes, guarda nombres de hojas en Excel y vectoriza respetando cuotas."""
     extension = ruta_archivo.lower().split('.')[-1]
 
     eliminar_documento_por_fuente(nombre_original)
@@ -151,87 +160,201 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
         supabase.table("documents").insert(data).execute()
         return 1
 
-    texto_completo = extraer_texto_de_archivo(ruta_archivo)
-    chunks = dividir_texto_recursivo(texto_completo, tamano_chunk=1000, solapamiento=200)
+    unidades = extraer_unidades_de_archivo(ruta_archivo)
+    items_preparados = []
+    indice_global = 0
 
-    if not chunks:
+    for nombre_hoja, texto_unidad in unidades:
+        chunks = dividir_texto_recursivo(texto_unidad, tamano_chunk=1000, solapamiento=200)
+        for chunk in chunks:
+            if nombre_hoja:
+                texto_formateado = f"[Documento Fuente: {nombre_original} | Hoja: {nombre_hoja}]\n{chunk}"
+                meta = {
+                    "fuente": nombre_original,
+                    "hoja": nombre_hoja,
+                    "fragmento": indice_global,
+                    "tipo": "excel"
+                }
+            else:
+                texto_formateado = f"[Documento Fuente: {nombre_original}]\n{chunk}"
+                meta = {
+                    "fuente": nombre_original,
+                    "fragmento": indice_global,
+                    "tipo": "texto"
+                }
+            items_preparados.append((texto_formateado, meta))
+            indice_global += 1
+
+    if not items_preparados:
         raise ValueError("El documento está vacío o no contiene texto extraíble.")
 
-    textos_con_fuente = [f"[Documento Fuente: {nombre_original}]\n{chunk}" for chunk in chunks]
-
-    # Lotes pequeños de 15 chunks (~4,500 tokens por lote) para no saturar el límite de 30k tokens/min
     registros_a_insertar = []
     tamano_lote = 15
 
-    for inicio in range(0, len(textos_con_fuente), tamano_lote):
-        lote_textos = textos_con_fuente[inicio:inicio + tamano_lote]
+    for inicio in range(0, len(items_preparados), tamano_lote):
+        lote = items_preparados[inicio:inicio + tamano_lote]
+        lote_textos = [item[0] for item in lote]
         embedding_response = generar_embeddings_con_reintento(lote_textos)
 
         for idx, emb_obj in enumerate(embedding_response.embeddings):
-            indice_global = inicio + idx
             registros_a_insertar.append({
-                "content": lote_textos[idx],
-                "metadata": {"fuente": nombre_original, "fragmento": indice_global, "tipo": "texto"},
+                "content": lote[idx][0],
+                "metadata": lote[idx][1],
                 "embedding": emb_obj.values
             })
 
-        # Pausa breve entre lotes si el documento es muy extenso
-        if inicio + tamano_lote < len(textos_con_fuente):
+        if inicio + tamano_lote < len(items_preparados):
             time.sleep(2.5)
 
-    # Insertar en Supabase en bloques de 100 registros
     for i in range(0, len(registros_a_insertar), 100):
         supabase.table("documents").insert(registros_a_insertar[i:i + 100]).execute()
 
     return len(registros_a_insertar)
 
 
+def detectar_archivo_hoja_y_modo_global(
+    pregunta: str,
+    historial: list[dict],
+    inventario: list[str],
+    mapa_hojas: dict[str, list[str]]
+) -> tuple[bool, str | None, str | None]:
+    """Detecta si la consulta pide leer un archivo completo o una hoja específica de un Excel."""
+    texto_combinado = pregunta.lower()
+    if historial:
+        texto_combinado += " " + " ".join(m.get("texto", "").lower() for m in historial[-2:])
+
+    archivo_objetivo = None
+    for nombre_archivo in inventario:
+        base_sin_ext = os.path.splitext(nombre_archivo)[0].lower()
+        if nombre_archivo.lower() in texto_combinado or (len(base_sin_ext) >= 4 and base_sin_ext in texto_combinado):
+            archivo_objetivo = nombre_archivo
+            break
+
+    # Verificar si el usuario menciona el nombre de alguna hoja de Excel indexada
+    hoja_objetivo = None
+    for archivo, hojas in mapa_hojas.items():
+        for h in hojas:
+            if len(h) >= 3 and h.lower() in texto_combinado:
+                hoja_objetivo = h
+                if not archivo_objetivo:
+                    archivo_objetivo = archivo
+                break
+        if hoja_objetivo:
+            break
+
+    palabras_globales = [
+        "todo", "todos", "todas", "completo", "completa", "total", "totales",
+        "cuantos", "cuántos", "cuantas", "cuántas", "cantidad", "conteo",
+        "lista", "listar", "listado", "resumen", "resume", "analiza", "analisis",
+        "estadistica", "estadísticas", "grafico", "gráfico", "grafica", "gráfica",
+        "consolidado", "exhaustivo", "archivo entero", "base completa", "hoja", "hojas", "pestaña"
+    ]
+    es_consulta_global = any(palabra in texto_combinado for palabra in palabras_globales) or (hoja_objetivo is not None)
+
+    if es_consulta_global and not archivo_objetivo:
+        archivos_excel = [f for f in inventario if f.lower().endswith(".xlsx")]
+        if len(archivos_excel) == 1:
+            archivo_objetivo = archivos_excel[0]
+
+    return es_consulta_global, archivo_objetivo, hoja_objetivo
+
+
+def recuperar_documento_completo(nombre_archivo: str, nombre_hoja: str | None = None) -> list[dict]:
+    """Recupera todos los fragmentos de un archivo (o de una hoja específica de Excel) ordenados."""
+    query = (
+        supabase.table("documents")
+        .select("content, metadata")
+        .eq("metadata->>fuente", nombre_archivo)
+    )
+    if nombre_hoja:
+        query = query.eq("metadata->>hoja", nombre_hoja)
+
+    res = query.limit(1000).execute()
+    datos = res.data or []
+    datos.sort(key=lambda x: x.get("metadata", {}).get("fragmento", 0))
+    for item in datos:
+        item["similarity"] = 0.95
+    return datos
+
+
 def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
-    """Ejecuta búsqueda híbrida (Vectorial + FTS), mantiene contexto de conversación y registra métricas."""
+    """Ejecuta búsqueda híbrida o recuperación completa (por archivo o por hoja de Excel) y registra métricas."""
     inicio_tiempo = time.perf_counter()
     historial = historial or []
 
     try:
         response_meta = supabase.table("documents").select("metadata").execute()
-        archivos_unicos = {
-            doc.get("metadata", {}).get("fuente")
-            for doc in response_meta.data
-            if "fuente" in doc.get("metadata", {})
-        }
+        archivos_unicos = set()
+        mapa_hojas_sets: dict[str, set] = {}
+
+        for doc in response_meta.data:
+            meta = doc.get("metadata", {})
+            fuente = meta.get("fuente")
+            if fuente:
+                archivos_unicos.add(fuente)
+                hoja = meta.get("hoja")
+                if hoja:
+                    mapa_hojas_sets.setdefault(fuente, set()).add(hoja)
+
         inventario_archivos = sorted(list(archivos_unicos))
+        mapa_hojas = {k: sorted(list(v)) for k, v in mapa_hojas_sets.items()}
 
-        consulta_busqueda = pregunta
-        if historial:
-            ultimos_turnos = "\n".join([f"{m.get('rol', 'user')}: {m.get('texto', '')}" for m in historial[-4:]])
-            consulta_busqueda = f"{ultimos_turnos}\nPregunta actual: {pregunta}"
+        es_global, archivo_objetivo, hoja_objetivo = detectar_archivo_hoja_y_modo_global(
+            pregunta, historial, inventario_archivos, mapa_hojas
+        )
 
-        embedding_response = generar_embeddings_con_reintento([consulta_busqueda])
-        vector_pregunta = embedding_response.embeddings[0].values
+        fragmentos = []
+        modo_recuperacion = "hibrido"
 
-        # Búsqueda Híbrida con respaldo vectorial automático
-        try:
-            respuesta_db = supabase.rpc(
-                "match_documents_hybrid",
-                {
-                    "query_text": pregunta,
-                    "query_embedding": vector_pregunta,
-                    "match_threshold": 0.35,
-                    "match_count": 8
-                }
-            ).execute()
-        except Exception:
-            respuesta_db = supabase.rpc(
-                "match_documents",
-                {
-                    "query_embedding": vector_pregunta,
-                    "match_threshold": 0.35,
-                    "match_count": 8
-                }
-            ).execute()
+        if es_global and archivo_objetivo:
+            fragmentos = recuperar_documento_completo(archivo_objetivo, hoja_objetivo)
+            modo_recuperacion = "completo"
 
-        fragmentos = respuesta_db.data or []
-        contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante en los documentos indexados."
-        fuentes_usadas = sorted(list({item["metadata"]["fuente"] for item in fragmentos if "fuente" in item.get("metadata", {})}))
+        if not fragmentos:
+            consulta_busqueda = pregunta
+            if historial:
+                ultimos_turnos = "\n".join([f"{m.get('rol', 'user')}: {m.get('texto', '')}" for m in historial[-4:]])
+                consulta_busqueda = f"{ultimos_turnos}\nPregunta actual: {pregunta}"
+
+            embedding_response = generar_embeddings_con_reintento([consulta_busqueda])
+            vector_pregunta = embedding_response.embeddings[0].values
+
+            try:
+                respuesta_db = supabase.rpc(
+                    "match_documents_hybrid",
+                    {
+                        "query_text": pregunta,
+                        "query_embedding": vector_pregunta,
+                        "match_threshold": 0.30,
+                        "match_count": 20
+                    }
+                ).execute()
+            except Exception:
+                respuesta_db = supabase.rpc(
+                    "match_documents",
+                    {
+                        "query_embedding": vector_pregunta,
+                        "match_threshold": 0.30,
+                        "match_count": 20
+                    }
+                ).execute()
+
+            fragmentos = respuesta_db.data or []
+
+        if modo_recuperacion == "completo" and fragmentos:
+            partes_limpias = []
+            for item in fragmentos:
+                c = re.sub(r"^\[Documento Fuente: [^\]]+\]\n?", "", item["content"])
+                partes_limpias.append(c)
+            etiqueta_hoja = f" | Hoja: {hoja_objetivo}" if hoja_objetivo else ""
+            contexto = f"=== CONTENIDO ÍNTEGRO: {archivo_objetivo}{etiqueta_hoja} ({len(fragmentos)} bloques procesados) ===\n" + "\n".join(partes_limpias)
+        else:
+            contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante en los documentos indexados."
+
+        fuentes_usadas = sorted(list({
+            f"{item['metadata']['fuente']} (Hoja: {item['metadata']['hoja']})" if item.get("metadata", {}).get("hoja") else item["metadata"]["fuente"]
+            for item in fragmentos if "fuente" in item.get("metadata", {})
+        }))
 
         similitudes = [item.get("similarity", 0) for item in fragmentos if item.get("similarity") is not None]
         similitud_promedio = round(sum(similitudes) / len(similitudes), 4) if similitudes else 0.0
@@ -241,13 +364,15 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
             lineas_hist = [f"- {'Usuario' if m.get('rol') == 'user' else 'Asistente'}: {m.get('texto', '')}" for m in historial[-4:]]
             texto_historial = "[HISTORIAL RECIENTE DE LA CONVERSACIÓN]:\n" + "\n".join(lineas_hist) + "\n\n"
 
+        info_hojas_excel = f"\n[HOJAS POR ARCHIVO EXCEL INDEXADO]:\n{mapa_hojas}\n" if mapa_hojas else ""
+
         prompt_final = f"""
         Eres el Asistente Corporativo inteligente diseñado exclusivamente para la empresa **Victory Logistic**.
         Analiza el contexto recuperado de los documentos (PDF, Word, Excel e imágenes transcritas) para asistir al equipo de Victory Logistic con precisión operativa y corporativa.
 
         [INVENTARIO DE ARCHIVOS INDEXADOS]:
         {inventario_archivos}
-
+        {info_hojas_excel}
         {texto_historial}[CONTEXTO RECUPERADO DE LA BASE DE DATOS]:
         {contexto}
 
@@ -255,9 +380,10 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
         {pregunta}
 
         Reglas estrictas de formato y respuesta:
-        1. **Identidad y Rigor:** Responde siempre como el asistente oficial de **Victory Logistic**. Basa tu respuesta ÚNICAMENTE en el contexto recuperado y el inventario. Si el dato no está en los documentos cargados, indícalo con claridad y cortesía sin inventar información.
-        2. **Uso Opcional de Tablas:** NO uses tablas para respuestas simples, definiciones o datos puntuales (como un solo RIF, una dirección o un nombre); en esos casos responde en párrafos claros y directos. Utiliza tablas Markdown **únicamente** cuando el usuario pida una tabla explícitamente o cuando sea necesario comparar múltiples registros, ítems o columnas de datos.
-        3. **Gráficos Estadísticos (Chart.js):** Si el usuario solicita un gráfico (barras, líneas, torta/dona) o si los datos numéricos recuperados se visualizan mejor gráficamente, incluye un bloque de código con la etiqueta `chart` que contenga ÚNICAMENTE un JSON válido compatible con Chart.js:
+        1. **Identidad y Procesamiento Completo:** Responde siempre como el asistente oficial de **Victory Logistic**. Cuando recibas el contenido íntegro de un archivo o de una hoja de Excel en el contexto, procésalo en su totalidad para realizar conteos exactos, agrupaciones, totales o análisis completos; nunca digas que tienes un límite técnico ni que estás usando una muestra parcial si los datos están presentes en el contexto.
+        2. **Rigor Documental:** Basa tu respuesta ÚNICAMENTE en el contexto recuperado y el inventario. Si un dato específico no aparece en los documentos cargados, indícalo con claridad y cortesía sin inventar información.
+        3. **Uso Opcional de Tablas:** NO uses tablas para respuestas simples, definiciones o datos puntuales (como un solo RIF, una dirección o un nombre); en esos casos responde en párrafos claros y directos. Utiliza tablas Markdown **únicamente** cuando el usuario pida una tabla explícitamente o cuando sea necesario comparar o listar múltiples registros.
+        4. **Gráficos Estadísticos (Chart.js):** Si el usuario solicita un gráfico (barras, líneas, torta/dona) o si los datos numéricos recuperados se visualizan mejor gráficamente, incluye un bloque de código con la etiqueta `chart` que contenga ÚNICAMENTE un JSON válido compatible con Chart.js:
            ```chart
            {{
              "type": "bar",
@@ -268,7 +394,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
            }}
            ```
            (Tipos válidos: "bar", "line", "pie", "doughnut". No agregues comentarios dentro del JSON).
-        4. **Diagramas de Flujo o Procesos (Mermaid.js):** Si el usuario solicita un diagrama, flujo de procesos, organigrama o mapa conceptual, incluye un bloque de código con la etiqueta `mermaid` usando sintaxis Mermaid válida (ej. `flowchart TD` o `sequenceDiagram`).
+        5. **Diagramas de Flujo o Procesos (Mermaid.js):** Si el usuario solicita un diagrama, flujo de procesos, organigrama o mapa conceptual, incluye un bloque de código con la etiqueta `mermaid` usando sintaxis Mermaid válida (ej. `flowchart TD` o `sequenceDiagram`).
         """
 
         response = gemini_client.models.generate_content(
