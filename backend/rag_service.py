@@ -3,6 +3,7 @@ import re
 import time
 import hashlib
 import secrets
+import threading
 import pypdf
 import docx
 import pandas as pd
@@ -27,6 +28,28 @@ DEPARTAMENTOS_VALIDOS = [
     "Accounting",
     "General"
 ]
+
+# Caché en memoria para evitar descargar todos los metadatos en cada pregunta
+_CACHE_INVENTARIO = {
+    "timestamp": 0.0,
+    "datos": []
+}
+CACHE_TTL_SEGUNDOS = 60.0
+
+
+def invalidar_cache_inventario():
+    _CACHE_INVENTARIO["timestamp"] = 0.0
+
+
+def obtener_metadatos_cacheados() -> list[dict]:
+    ahora = time.time()
+    if ahora - _CACHE_INVENTARIO["timestamp"] < CACHE_TTL_SEGUNDOS and _CACHE_INVENTARIO["datos"]:
+        return _CACHE_INVENTARIO["datos"]
+
+    res = supabase.table("documents").select("metadata").execute()
+    _CACHE_INVENTARIO["datos"] = res.data or []
+    _CACHE_INVENTARIO["timestamp"] = ahora
+    return _CACHE_INVENTARIO["datos"]
 
 
 # =========================================================
@@ -272,6 +295,7 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
             "embedding": vector
         }
         supabase.table("documents").insert(data).execute()
+        invalidar_cache_inventario()
         return 1
 
     unidades = extraer_unidades_de_archivo(ruta_archivo)
@@ -325,22 +349,47 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
     for i in range(0, len(registros_a_insertar), 100):
         supabase.table("documents").insert(registros_a_insertar[i:i + 100]).execute()
 
+    invalidar_cache_inventario()
     return len(registros_a_insertar)
 
 
 # =========================================================
-# CONSULTA RAG RÁPIDA Y AISLADA POR DEPARTAMENTO
+# FAST-PATH CONVERSACIONAL Y CONSULTA RAG ULTRA-RÁPIDA
 # =========================================================
+
+def es_interaccion_casual(pregunta: str) -> str | None:
+    """Detecta saludos, cortesías o despedidas cortas para responder en <0.1s sin latencia vectorial."""
+    limpia = re.sub(r"[¿?¡!.,;:]+", "", pregunta.strip().lower())
+    palabras = limpia.split()
+    if len(palabras) > 6:
+        return None
+
+    saludos = {
+        "hola", "buenos dias", "buenos días", "buenas tardes", "buenas noches",
+        "saludos", "hey", "que tal", "qué tal", "como estas", "cómo estás",
+        "todo bien", "todo bien y tu", "todo bien y tú", "hola como estas", "hola qué tal"
+    }
+    agradecimientos = {
+        "gracias", "muchas gracias", "excelente", "perfecto", "genial", "ok", "vale", "listo", "entendido"
+    }
+    despedidas = {
+        "adios", "adiós", "hasta luego", "nos vemos", "chao", "bye"
+    }
+
+    if limpia in saludos:
+        return "¡Todo excelente por aquí! Como asistente oficial de **Victory Logistic**, estoy listo para ayudarte con consultas operativas, reportes o información de tu departamento. ¿Qué necesitas revisar?"
+    if limpia in agradecimientos:
+        return "¡Con mucho gusto! Si necesitas consultar otro documento, generar un gráfico o revisar algún registro de **Victory Logistic**, aquí estoy."
+    if limpia in despedidas:
+        return "¡Hasta luego! Que tengas una excelente jornada en **Victory Logistic**."
+    return None
+
 
 def detectar_archivo_hoja_y_modo_global(
     pregunta: str,
     inventario: list[str],
     mapa_hojas: dict[str, list[str]]
 ) -> tuple[bool, str | None, str | None]:
-    """
-    Activa el modo de lectura completa SOLO cuando el usuario solicita explícitamente
-    procesar un archivo completo o una hoja completa, evitando lentitud en consultas normales.
-    """
     texto = pregunta.lower()
 
     archivo_objetivo = None
@@ -361,7 +410,6 @@ def detectar_archivo_hoja_y_modo_global(
         if hoja_objetivo:
             break
 
-    # Frases explícitas de análisis exhaustivo (evita dispararse con palabras sueltas como "total" o "lista")
     frases_globales = [
         "archivo completo", "excel completo", "documento completo", "base completa",
         "todos los registros", "todas las filas", "todos los datos", "analiza todo",
@@ -407,10 +455,35 @@ def recuperar_documento_completo(
     return datos
 
 
+def _guardar_metrica_async(pregunta: str, latencia_ms: int, similitud_promedio: float, fuentes_usadas: list[str], ambito: str):
+    try:
+        supabase.table("rag_metrics").insert({
+            "pregunta": pregunta,
+            "latencia_ms": latencia_ms,
+            "similitud_promedio": similitud_promedio,
+            "fuentes_usadas": fuentes_usadas,
+            "departamento": ambito
+        }).execute()
+    except Exception:
+        pass
+
+
 def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: dict = None, filtro_admin_depto: str = None) -> dict:
     inicio_tiempo = time.perf_counter()
     historial = historial or []
     usuario_actual = usuario_actual or {"rol": "usuario", "departamento": "General"}
+
+    # 1. Fast-Path: Si es un saludo o cortesía simple, responder instantáneamente (<0.05s)
+    respuesta_casual = es_interaccion_casual(pregunta)
+    if respuesta_casual:
+        latencia_ms = max(1, int((time.perf_counter() - inicio_tiempo) * 1000))
+        return {
+            "respuesta": respuesta_casual,
+            "fuentes": [],
+            "latencia_ms": latencia_ms,
+            "similitud_promedio": 1.0,
+            "metric_id": None
+        }
 
     es_admin = usuario_actual.get("rol") == "admin"
     if es_admin:
@@ -419,14 +492,13 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
         depto_efectivo = usuario_actual.get("departamento")
 
     try:
-        # Obtener solo los metadatos filtrados por departamento si aplica
-        query_meta = supabase.table("documents").select("metadata")
-        response_meta = query_meta.execute()
+        # 2. Leer inventario desde caché en memoria (evita 1.2s de consulta repetitiva a Supabase)
+        metadata_rows = obtener_metadatos_cacheados()
 
         archivos_unicos = set()
         mapa_hojas_sets: dict[str, set] = {}
 
-        for doc in response_meta.data:
+        for doc in metadata_rows:
             meta = doc.get("metadata", {})
             depto_doc = meta.get("departamento", "General")
             if depto_efectivo and depto_doc not in (depto_efectivo, "General"):
@@ -469,7 +541,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
                     "query_embedding": vector_pregunta,
                     "filter_departamento": depto_efectivo,
                     "match_threshold": 0.30,
-                    "match_count": 12
+                    "match_count": 8
                 }
             ).execute()
 
@@ -495,40 +567,32 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
 
         texto_historial = ""
         if historial:
-            lineas_hist = [f"- {'Usuario' if m.get('rol') == 'user' else 'Asistente'}: {m.get('texto', '')}" for m in historial[-4:]]
-            texto_historial = "[HISTORIAL RECIENTE DE LA CONVERSACIÓN]:\n" + "\n".join(lineas_hist) + "\n\n"
+            lineas_hist = [f"- {'Usuario' if m.get('rol') == 'user' else 'Asistente'}: {m.get('texto', '')}" for m in historial[-2:]]
+            texto_historial = "[HISTORIAL RECIENTE]:\n" + "\n".join(lineas_hist) + "\n\n"
 
-        info_hojas_excel = f"\n[HOJAS POR ARCHIVO EXCEL ACCESIBLE]:\n{mapa_hojas}\n" if mapa_hojas else ""
-        ambito_usuario = depto_efectivo if depto_efectivo else "Todos los departamentos (Acceso Administrador)"
+        info_hojas_excel = f"\n[HOJAS EXCEL]: {mapa_hojas}\n" if mapa_hojas else ""
+        ambito_usuario = depto_efectivo if depto_efectivo else "Todos los departamentos (Admin)"
 
         prompt_final = f"""
-        Eres el Asistente Corporativo inteligente diseñado exclusivamente para la empresa **Victory Logistic**.
-        Estás asistiendo a: **{usuario_actual.get('nombre')}** (Rol: {usuario_actual.get('rol')}, Ámbito de acceso: **{ambito_usuario}**).
+        Eres el Asistente Corporativo oficial de **Victory Logistic**.
+        Usuario: **{usuario_actual.get('nombre')}** (Rol: {usuario_actual.get('rol')}, Ámbito: **{ambito_usuario}**).
 
-        [INVENTARIO DE ARCHIVOS ACCESIBLES PARA ESTE DEPARTAMENTO]:
-        {inventario_archivos}
-        {info_hojas_excel}
-        {texto_historial}[CONTEXTO RECUPERADO DE LA BASE DE DATOS]:
+        [ARCHIVOS ACCESIBLES]: {inventario_archivos}{info_hojas_excel}
+        {texto_historial}[CONTEXTO]:
         {contexto}
 
-        [PREGUNTA ACTUAL DEL USUARIO]:
+        [PREGUNTA]:
         {pregunta}
 
-        Reglas estrictas de formato y seguridad:
-        1. **Confidencialidad Departamental:** Solo puedes responder con información proveniente de los documentos del departamento autorizado (**{ambito_usuario}**). Si el usuario pregunta por información de otro departamento al que no tiene acceso o que no está en los documentos disponibles, indica con cortesía que no tienes registros disponibles en su área.
-        2. **Procesamiento Completo:** Responde siempre como el asistente oficial de **Victory Logistic**. Si el usuario necesita un análisis exhaustivo de todo un archivo grande, indícale que puede pedirlo escribiendo *"analiza el archivo completo [nombre]"*.
-        3. **Uso Opcional de Tablas:** NO uses tablas para respuestas simples, definiciones o datos puntuales (como un solo RIF, una dirección o un nombre); en esos casos responde en párrafos claros y directos. Utiliza tablas Markdown **únicamente** cuando el usuario pida una tabla explícitamente o cuando sea necesario comparar o listar múltiples registros.
-        4. **Gráficos Estadísticos (Chart.js):** Si el usuario solicita un gráfico (barras, líneas, torta/dona) o si los datos numéricos recuperados se visualizan mejor gráficamente, incluye un bloque de código con la etiqueta `chart` que contenga ÚNICAMENTE un JSON válido compatible con Chart.js:
+        Reglas estrictas:
+        1. **Confidencialidad Departamental:** Responde únicamente con información de los documentos autorizados (**{ambito_usuario}**). Si el dato no aparece en el contexto, dilo con cortesía sin inventar.
+        2. **Análisis Completo:** Si el usuario pide analizar un documento grande por completo, indícale que escriba *"analiza el archivo completo [nombre]"*.
+        3. **Tablas Opcionales:** NO uses tablas para datos simples o puntuales (un solo RIF, nombre o dirección). Usa tablas Markdown **solo** cuando el usuario pida una tabla o sea necesario listar múltiples registros.
+        4. **Gráficos (Chart.js):** Si se pide un gráfico, incluye un bloque `chart` con JSON válido:
            ```chart
-           {{
-             "type": "bar",
-             "data": {{
-               "labels": ["Etiqueta 1", "Etiqueta 2"],
-               "datasets": [{{ "label": "Serie", "data": [10, 20] }}]
-             }}
-           }}
+           {{ "type": "bar", "data": {{ "labels": ["A", "B"], "datasets": [{{ "label": "Serie", "data": [10, 20] }}] }} }}
            ```
-        5. **Diagramas de Flujo o Procesos (Mermaid.js):** Si el usuario solicita un diagrama, flujo de procesos, organigrama o mapa conceptual, incluye un bloque de código con la etiqueta `mermaid` usando sintaxis Mermaid válida.
+        5. **Diagramas (Mermaid.js):** Si se pide un diagrama o flujo, incluye un bloque `mermaid` con sintaxis válida.
         """
 
         response = gemini_client.models.generate_content(
@@ -538,26 +602,19 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
 
         latencia_ms = int((time.perf_counter() - inicio_tiempo) * 1000)
 
-        metric_id = None
-        try:
-            res_metric = supabase.table("rag_metrics").insert({
-                "pregunta": pregunta,
-                "latencia_ms": latencia_ms,
-                "similitud_promedio": similitud_promedio,
-                "fuentes_usadas": fuentes_usadas,
-                "departamento": ambito_usuario
-            }).execute()
-            if res_metric.data:
-                metric_id = res_metric.data[0]["id"]
-        except Exception:
-            pass
+        # Guardar métrica en segundo plano sin retrasar la entrega al usuario
+        threading.Thread(
+            target=_guardar_metrica_async,
+            args=(pregunta, latencia_ms, similitud_promedio, fuentes_usadas, ambito_usuario),
+            daemon=True
+        ).start()
 
         return {
             "respuesta": response.text,
             "fuentes": fuentes_usadas,
             "latencia_ms": latencia_ms,
             "similitud_promedio": similitud_promedio,
-            "metric_id": metric_id
+            "metric_id": None
         }
     except Exception as e:
         raise Exception(f"Error en el servicio RAG: {str(e)}")
@@ -566,6 +623,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
 def eliminar_documento_por_fuente(nombre_archivo: str):
     try:
         supabase.table("documents").delete().eq("metadata->>fuente", nombre_archivo).execute()
+        invalidar_cache_inventario()
     except Exception as e:
         raise Exception(f"Error al eliminar el documento en Supabase: {str(e)}")
 
@@ -575,8 +633,7 @@ def registrar_feedback_metrica(metric_id: int, feedback: int):
 
 
 def obtener_estadisticas_tesis() -> dict:
-    res_docs = supabase.table("documents").select("metadata").execute()
-    documentos = res_docs.data or []
+    documentos = obtener_metadatos_cacheados()
 
     mapa_archivos_depto: dict[str, str] = {}
     for doc in documentos:
