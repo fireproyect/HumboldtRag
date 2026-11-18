@@ -7,7 +7,7 @@
     --text-secondary: #64748b;
     --border-color: #e2e8f0;
     --border-strong: #cbd5e1;
-    --brand-primary: #0f294a; /* Azul corporativo Victory Logistic */
+    --brand-primary: #0f294a;
     --brand-accent: #2563eb;
     --brand-accent-hover: #1d4ed8;
     --user-msg-bg: #2563eb;
@@ -61,7 +61,7 @@ body.chat-page {
 header {
     background-color: var(--brand-primary);
     color: #ffffff;
-    padding: 14px 24px;
+    padding: 12px 24px;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -73,44 +73,78 @@ header {
 .header-left {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 12px;
     flex-wrap: wrap;
 }
 
 header h1 {
-    font-size: 1.18rem;
+    font-size: 1.15rem;
     font-weight: 700;
-    letter-spacing: 0.2px;
 }
 
 .header-actions {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
+    flex-wrap: wrap;
 }
 
 header a {
     color: #93c5fd;
     text-decoration: none;
-    font-size: 0.9rem;
-    font-weight: 500;
+    font-size: 0.88rem;
+    font-weight: 600;
 }
 
 header a:hover {
     text-decoration: underline;
 }
 
+.user-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.14);
+    padding: 4px 11px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    color: #f8fafc;
+}
+
+.dept-badge {
+    display: inline-block;
+    background: rgba(37, 99, 235, 0.14);
+    color: var(--brand-accent);
+    border: 1px solid rgba(37, 99, 235, 0.3);
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.header-select {
+    background: rgba(255, 255, 255, 0.14);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    outline: none;
+}
+
+.header-select option {
+    background: #0f294a;
+    color: #ffffff;
+}
+
 .theme-toggle {
     background: rgba(255, 255, 255, 0.14);
     color: #ffffff;
     border: 1px solid rgba(255, 255, 255, 0.2);
-    padding: 6px 10px;
+    padding: 5px 10px;
     border-radius: 6px;
     cursor: pointer;
     font-size: 0.9rem;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
 }
 
 .theme-toggle:hover {
@@ -125,7 +159,7 @@ header a:hover {
     background: rgba(255, 255, 255, 0.12);
     padding: 4px 10px;
     border-radius: 999px;
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     color: #e2e8f0;
 }
 
@@ -152,12 +186,86 @@ header a:hover {
     50% { opacity: 0.35; }
 }
 
+/* Pantalla de Login y Registro */
+.auth-wrapper {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 430px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 28px;
+    box-shadow: var(--shadow-md);
+}
+
+.auth-tabs {
+    display: flex;
+    border-bottom: 2px solid var(--border-color);
+    margin-bottom: 20px;
+}
+
+.auth-tab {
+    flex: 1;
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: 0;
+    padding: 10px;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+}
+
+.auth-tab:hover:not(:disabled) {
+    background: transparent;
+    color: var(--text-primary);
+}
+
+.auth-tab.active {
+    color: var(--brand-accent);
+    border-bottom-color: var(--brand-accent);
+}
+
+.form-group {
+    margin-bottom: 14px;
+    text-align: left;
+}
+
+.form-group label {
+    display: block;
+    font-size: 0.84rem;
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: var(--text-primary);
+}
+
+.form-control {
+    width: 100%;
+    padding: 11px 13px;
+    background: var(--bg-chat);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    font-size: 0.94rem;
+    outline: none;
+}
+
+.form-control:focus {
+    border-color: var(--brand-accent);
+}
+
 /* Contenedor de Chat */
 #chat-container {
     flex: 1;
     max-width: 960px;
     width: 100%;
-    margin: 16px auto;
+    margin: 14px auto;
     background: var(--bg-surface);
     border-radius: 12px;
     box-shadow: var(--shadow-md);
@@ -295,11 +403,6 @@ header a:hover {
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.78rem;
-    transition: all 0.15s;
-}
-
-.fb-btn:hover {
-    opacity: 0.85;
 }
 
 .fb-btn.active-like {
@@ -335,10 +438,6 @@ header a:hover {
 
 #user-input:focus {
     border-color: var(--brand-accent);
-}
-
-#user-input:disabled {
-    opacity: 0.6;
 }
 
 /* Botones generales */
@@ -382,7 +481,7 @@ button.danger:hover:not(:disabled) {
 /* Panel Administrador */
 .container {
     flex: 1;
-    max-width: 1060px;
+    max-width: 1080px;
     width: 100%;
     margin: 20px auto;
     padding: 0 16px;
@@ -405,7 +504,6 @@ button.danger:hover:not(:disabled) {
     padding-bottom: 8px;
 }
 
-/* Grid de KPIs con Tooltips al pasar el mouse */
 .kpi-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
@@ -459,7 +557,6 @@ button.danger:hover:not(:disabled) {
     margin-top: 6px;
 }
 
-/* Tooltip emergente al hacer hover */
 .kpi-tooltip {
     visibility: hidden;
     opacity: 0;
@@ -512,6 +609,15 @@ button.danger:hover:not(:disabled) {
     border-color: var(--brand-accent);
 }
 
+.upload-controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    max-width: 420px;
+    margin: 0 auto;
+}
+
 .admin-table {
     width: 100%;
     border-collapse: collapse;
@@ -535,32 +641,6 @@ button.danger:hover:not(:disabled) {
     background-color: var(--table-stripe);
 }
 
-/* Modal de Login Admin */
-.login-box {
-    max-width: 400px;
-    margin: 70px auto;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-color);
-    padding: 30px;
-    border-radius: 12px;
-    box-shadow: var(--shadow-md);
-    text-align: center;
-}
-
-.login-box input {
-    width: 100%;
-    padding: 12px;
-    margin: 15px 0;
-    background: var(--bg-chat);
-    color: var(--text-primary);
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    font-size: 0.95rem;
-}
-
-/* =========================================================
-   DISEÑO RESPONSIVO MÓVIL (DIFERENCIADO DE COMPUTADORA)
-   ========================================================= */
 @media (max-width: 768px) {
     header {
         padding: 10px 14px;
@@ -571,11 +651,6 @@ button.danger:hover:not(:disabled) {
         font-size: 1rem;
     }
 
-    .status-badge {
-        font-size: 0.72rem;
-        padding: 3px 8px;
-    }
-
     .header-actions {
         width: 100%;
         justify-content: space-between;
@@ -583,7 +658,6 @@ button.danger:hover:not(:disabled) {
         border-top: 1px solid rgba(255, 255, 255, 0.12);
     }
 
-    /* En móvil el chat ocupa el 100% de la pantalla sin márgenes externos */
     #chat-container {
         margin: 0;
         border-radius: 0;
@@ -610,14 +684,9 @@ button.danger:hover:not(:disabled) {
 
     #user-input {
         padding: 10px 12px;
-        font-size: 16px; /* Evita zoom automático en iOS */
+        font-size: 16px;
     }
 
-    #send-btn {
-        padding: 0 14px;
-    }
-
-    /* Ajustes Admin en móvil */
     .container {
         padding: 0 10px;
         margin: 12px auto;
@@ -640,10 +709,5 @@ button.danger:hover:not(:disabled) {
 
     .kpi-tooltip::after {
         left: 20px;
-    }
-
-    .login-box {
-        margin: 30px 14px;
-        padding: 22px;
     }
 }
