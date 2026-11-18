@@ -81,7 +81,6 @@ def autenticar_usuario(username: str, password: str) -> dict:
     username_limpio = username.strip().lower()
     admin_secret = os.getenv("ADMIN_SECRET_KEY", "")
 
-    # Permitir acceso directo del Administrador Maestro con usuario "admin" + ADMIN_SECRET_KEY
     if username_limpio == "admin" and admin_secret and secrets.compare_digest(password, admin_secret):
         return {
             "id": 0,
@@ -233,7 +232,6 @@ def generar_embeddings_con_reintento(textos: list[str], max_reintentos: int = 4)
 
 
 def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departamento: str = "General") -> int:
-    """Procesa documentos o imágenes asignándoles su departamento correspondiente."""
     if departamento not in DEPARTAMENTOS_VALIDOS:
         raise ValueError(f"Departamento '{departamento}' no reconocido.")
 
@@ -331,30 +329,31 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
 
 
 # =========================================================
-# CONSULTA RAG AISLADA POR DEPARTAMENTO
+# CONSULTA RAG RÁPIDA Y AISLADA POR DEPARTAMENTO
 # =========================================================
 
 def detectar_archivo_hoja_y_modo_global(
     pregunta: str,
-    historial: list[dict],
     inventario: list[str],
     mapa_hojas: dict[str, list[str]]
 ) -> tuple[bool, str | None, str | None]:
-    texto_combinado = pregunta.lower()
-    if historial:
-        texto_combinado += " " + " ".join(m.get("texto", "").lower() for m in historial[-2:])
+    """
+    Activa el modo de lectura completa SOLO cuando el usuario solicita explícitamente
+    procesar un archivo completo o una hoja completa, evitando lentitud en consultas normales.
+    """
+    texto = pregunta.lower()
 
     archivo_objetivo = None
     for nombre_archivo in inventario:
         base_sin_ext = os.path.splitext(nombre_archivo)[0].lower()
-        if nombre_archivo.lower() in texto_combinado or (len(base_sin_ext) >= 4 and base_sin_ext in texto_combinado):
+        if nombre_archivo.lower() in texto or (len(base_sin_ext) >= 4 and base_sin_ext in texto):
             archivo_objetivo = nombre_archivo
             break
 
     hoja_objetivo = None
     for archivo, hojas in mapa_hojas.items():
         for h in hojas:
-            if len(h) >= 3 and h.lower() in texto_combinado:
+            if len(h) >= 3 and h.lower() in texto:
                 hoja_objetivo = h
                 if not archivo_objetivo:
                     archivo_objetivo = archivo
@@ -362,14 +361,15 @@ def detectar_archivo_hoja_y_modo_global(
         if hoja_objetivo:
             break
 
-    palabras_globales = [
-        "todo", "todos", "todas", "completo", "completa", "total", "totales",
-        "cuantos", "cuántos", "cuantas", "cuántas", "cantidad", "conteo",
-        "lista", "listar", "listado", "resumen", "resume", "analiza", "analisis",
-        "estadistica", "estadísticas", "grafico", "gráfico", "grafica", "gráfica",
-        "consolidado", "exhaustivo", "archivo entero", "base completa", "hoja", "hojas", "pestaña"
+    # Frases explícitas de análisis exhaustivo (evita dispararse con palabras sueltas como "total" o "lista")
+    frases_globales = [
+        "archivo completo", "excel completo", "documento completo", "base completa",
+        "todos los registros", "todas las filas", "todos los datos", "analiza todo",
+        "resumen completo", "reporte consolidado", "sin muestra parcial", "hoja completa"
     ]
-    es_consulta_global = any(palabra in texto_combinado for palabra in palabras_globales) or (hoja_objetivo is not None)
+    es_consulta_global = any(frase in texto for frase in frases_globales) or (
+        hoja_objetivo is not None and any(w in texto for w in ["todo", "todos", "cuántos", "cuantos", "analiza", "gráfico", "grafico"])
+    )
 
     if es_consulta_global and not archivo_objetivo:
         archivos_excel = [f for f in inventario if f.lower().endswith(".xlsx")]
@@ -395,7 +395,6 @@ def recuperar_documento_completo(
     res = query.limit(1000).execute()
     datos = res.data or []
 
-    # Validar permiso por departamento si no es admin global
     if departamento_filtro:
         datos = [
             d for d in datos
@@ -409,21 +408,21 @@ def recuperar_documento_completo(
 
 
 def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: dict = None, filtro_admin_depto: str = None) -> dict:
-    """Ejecuta búsqueda híbrida o completa respetando el departamento del usuario autenticado."""
     inicio_tiempo = time.perf_counter()
     historial = historial or []
     usuario_actual = usuario_actual or {"rol": "usuario", "departamento": "General"}
 
     es_admin = usuario_actual.get("rol") == "admin"
     if es_admin:
-        # El admin puede ver todo (None) o filtrar por un departamento específico desde el chat
         depto_efectivo = filtro_admin_depto if (filtro_admin_depto and filtro_admin_depto != "Todos") else None
     else:
-        # El usuario normal queda estrictamente restringido a su departamento (+ General)
         depto_efectivo = usuario_actual.get("departamento")
 
     try:
-        response_meta = supabase.table("documents").select("metadata").execute()
+        # Obtener solo los metadatos filtrados por departamento si aplica
+        query_meta = supabase.table("documents").select("metadata")
+        response_meta = query_meta.execute()
+
         archivos_unicos = set()
         mapa_hojas_sets: dict[str, set] = {}
 
@@ -444,7 +443,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
         mapa_hojas = {k: sorted(list(v)) for k, v in mapa_hojas_sets.items()}
 
         es_global, archivo_objetivo, hoja_objetivo = detectar_archivo_hoja_y_modo_global(
-            pregunta, historial, inventario_archivos, mapa_hojas
+            pregunta, inventario_archivos, mapa_hojas
         )
 
         fragmentos = []
@@ -457,7 +456,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
         if not fragmentos:
             consulta_busqueda = pregunta
             if historial:
-                ultimos_turnos = "\n".join([f"{m.get('rol', 'user')}: {m.get('texto', '')}" for m in historial[-4:]])
+                ultimos_turnos = "\n".join([f"{m.get('rol', 'user')}: {m.get('texto', '')}" for m in historial[-2:]])
                 consulta_busqueda = f"{ultimos_turnos}\nPregunta actual: {pregunta}"
 
             embedding_response = generar_embeddings_con_reintento([consulta_busqueda])
@@ -470,7 +469,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
                     "query_embedding": vector_pregunta,
                     "filter_departamento": depto_efectivo,
                     "match_threshold": 0.30,
-                    "match_count": 20
+                    "match_count": 12
                 }
             ).execute()
 
@@ -517,7 +516,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
 
         Reglas estrictas de formato y seguridad:
         1. **Confidencialidad Departamental:** Solo puedes responder con información proveniente de los documentos del departamento autorizado (**{ambito_usuario}**). Si el usuario pregunta por información de otro departamento al que no tiene acceso o que no está en los documentos disponibles, indica con cortesía que no tienes registros disponibles en su área.
-        2. **Procesamiento Completo:** Responde siempre como el asistente oficial de **Victory Logistic**. Cuando recibas el contenido íntegro de un archivo o de una hoja de Excel en el contexto, procésalo en su totalidad para realizar conteos exactos, agrupaciones, totales o análisis completos; nunca digas que tienes un límite técnico ni que estás usando una muestra parcial.
+        2. **Procesamiento Completo:** Responde siempre como el asistente oficial de **Victory Logistic**. Si el usuario necesita un análisis exhaustivo de todo un archivo grande, indícale que puede pedirlo escribiendo *"analiza el archivo completo [nombre]"*.
         3. **Uso Opcional de Tablas:** NO uses tablas para respuestas simples, definiciones o datos puntuales (como un solo RIF, una dirección o un nombre); en esos casos responde en párrafos claros y directos. Utiliza tablas Markdown **únicamente** cuando el usuario pida una tabla explícitamente o cuando sea necesario comparar o listar múltiples registros.
         4. **Gráficos Estadísticos (Chart.js):** Si el usuario solicita un gráfico (barras, líneas, torta/dona) o si los datos numéricos recuperados se visualizan mejor gráficamente, incluye un bloque de código con la etiqueta `chart` que contenga ÚNICAMENTE un JSON válido compatible con Chart.js:
            ```chart
