@@ -3,6 +3,7 @@ import re
 import time
 import hashlib
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 import pypdf
 import docx
 import pandas as pd
@@ -106,11 +107,10 @@ def eliminar_usuario_admin(user_id: int):
 
 
 # =========================================================
-# GENERACIÓN CON GEMINI 3.5 FLASH LITE (BAJA LATENCIA)
+# GENERACIÓN CON GEMINI 3.5 FLASH LITE + FALLBACK RÁPIDO
 # =========================================================
 
 def generar_respuesta_rapida(contents):
-    """Usa gemini-3.5-flash-lite sin thinking overhead y con fallback inmediato ante 503."""
     modelos = ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite"]
     ultimo_error = None
 
@@ -119,21 +119,13 @@ def generar_respuesta_rapida(contents):
             return gemini_client.models.generate_content(
                 model=modelo,
                 contents=contents,
-                config=types.GenerateContentConfig(
-                    temperature=0.2,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0)
-                )
+                config=types.GenerateContentConfig(temperature=0.1)
             )
         except Exception as e:
             ultimo_error = e
             if any(c in str(e) for c in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "overloaded"]):
                 continue
-            # Si el modelo no acepta thinking_config, reintentar sin esa config
-            try:
-                return gemini_client.models.generate_content(model=modelo, contents=contents)
-            except Exception as e2:
-                ultimo_error = e2
-                continue
+            raise e
     raise ultimo_error
 
 
@@ -254,7 +246,7 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
         try:
             analisis_imagen = generar_respuesta_rapida([
                 archivo_subido,
-                "Extrae y transcribe todo el texto visible en esta imagen, incluyendo números, nombres, fechas, montos y tablas."
+                "Extrae y transcribe absolutamente todo el texto visible en esta imagen, incluyendo números, nombres, fechas, montos y tablas."
             ])
             texto_imagen = analisis_imagen.text
         except Exception as e:
@@ -319,7 +311,7 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
 
 
 # =========================================================
-# CONSULTA RAG DIRECTA (OBJETIVO: 1 A 2 SEGUNDOS)
+# CONSULTA RAG PRECISA Y RÁPIDA
 # =========================================================
 
 def es_interaccion_casual(pregunta: str) -> str | None:
@@ -357,8 +349,36 @@ def registrar_metrica_en_segundo_plano(pregunta: str, latencia_ms: int, similitu
         pass
 
 
+def _crear_metric_id(pregunta: str, ambito: str) -> int | None:
+    try:
+        res = supabase.table("rag_metrics").insert({
+            "pregunta": pregunta,
+            "latencia_ms": 0,
+            "similitud_promedio": 0.0,
+            "fuentes_usadas": [],
+            "departamento": ambito
+        }).execute()
+        if res.data:
+            return res.data[0]["id"]
+    except Exception:
+        pass
+    return None
+
+
+def _actualizar_metrica(metric_id: int | None, latencia_ms: int, similitud_promedio: float, fuentes_usadas: list[str]):
+    if not metric_id:
+        return
+    try:
+        supabase.table("rag_metrics").update({
+            "latencia_ms": latencia_ms,
+            "similitud_promedio": similitud_promedio,
+            "fuentes_usadas": fuentes_usadas
+        }).eq("id", metric_id).execute()
+    except Exception:
+        pass
+
+
 def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: dict = None, filtro_admin_depto: str = None) -> dict:
-    """Flujo directo de 3 pasos: 1) Embedding pregunta -> 2) RPC Supabase (top 5) -> 3) Gemini 3.5 Flash-Lite."""
     inicio_tiempo = time.perf_counter()
     historial = historial or []
     usuario_actual = usuario_actual or {"rol": "usuario", "departamento": "General"}
@@ -371,6 +391,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
             "fuentes": [],
             "latencia_ms": latencia_ms,
             "similitud_promedio": 1.0,
+            "metric_id": None,
             "ambito": "Casual"
         }
 
@@ -383,28 +404,33 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
     ambito_usuario = depto_efectivo if depto_efectivo else "Todos los departamentos"
 
     try:
-        # Paso 1: Vectorizar únicamente la pregunta actual (más rápido y preciso)
+        # Incluir último turno en la búsqueda para resolver preguntas de seguimiento con precisión
+        consulta_busqueda = pregunta
+        if historial:
+            ultimos = "\n".join([f"{m.get('rol', 'user')}: {m.get('texto', '')}" for m in historial[-2:]])
+            consulta_busqueda = f"{ultimos}\nConsulta actual: {pregunta}"
+
         embedding_response = gemini_client.models.embed_content(
             model="gemini-embedding-2",
-            contents=pregunta,
+            contents=consulta_busqueda,
             config=types.EmbedContentConfig(output_dimensionality=768)
         )
         vector_pregunta = embedding_response.embeddings[0].values
 
-        # Paso 2: Búsqueda Híbrida directa en Supabase (Top 5 fragmentos)
+        # Recuperar los 12 fragmentos más relevantes usando índice HNSW + Full-Text Search
         respuesta_db = supabase.rpc(
             "match_documents_hybrid",
             {
                 "query_text": pregunta,
                 "query_embedding": vector_pregunta,
                 "filter_departamento": depto_efectivo,
-                "match_threshold": 0.30,
-                "match_count": 5
+                "match_threshold": 0.25,
+                "match_count": 12
             }
         ).execute()
 
         fragmentos = respuesta_db.data or []
-        contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "Sin coincidencias documentales."
+        contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontraron registros relevantes en los documentos de este departamento."
 
         fuentes_usadas = sorted(list({
             f"{item['metadata']['fuente']} (Hoja: {item['metadata']['hoja']})" if item.get("metadata", {}).get("hoja") else item["metadata"]["fuente"]
@@ -416,29 +442,43 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
 
         texto_historial = ""
         if historial:
-            lineas = [f"{'Usuario' if m.get('rol') == 'user' else 'Asistente'}: {m.get('texto', '')}" for m in historial[-2:]]
-            texto_historial = "Historial:\n" + "\n".join(lineas) + "\n\n"
+            lineas = [f"- {'Usuario' if m.get('rol') == 'user' else 'Asistente'}: {m.get('texto', '')}" for m in historial[-4:]]
+            texto_historial = "[HISTORIAL DE CONVERSACIÓN]:\n" + "\n".join(lineas) + "\n\n"
 
-        # Paso 3: Prompt compacto para que gemini-3.5-flash-lite responda en < 1 segundo
-        prompt_final = f"""Eres el asistente de **Victory Logistic** para el área **{ambito_usuario}**.
-{texto_historial}Contexto documental:
+        prompt_final = f"""Eres el Asistente Corporativo oficial de **Victory Logistic**.
+Atiendes a **{usuario_actual.get('nombre')}** (Ámbito autorizado: **{ambito_usuario}**).
+
+{texto_historial}[CONTEXTO DOCUMENTAL RECUPERADO]:
 {contexto}
 
-Pregunta: {pregunta}
+[PREGUNTA DEL USUARIO]:
+{pregunta}
 
-Reglas:
-- Responde directo y conciso usando solo el contexto de **{ambito_usuario}**. Si no está en el contexto, dilo con cortesía.
-- No uses tablas para respuestas simples o datos puntuales; úsalas solo para listar o comparar múltiples registros.
-- Si piden gráfico, incluye bloque `chart` con JSON válido de Chart.js; si piden diagrama, bloque `mermaid`."""
+Reglas estrictas:
+1. Basa tu respuesta ÚNICAMENTE en el contexto documental recuperado para **{ambito_usuario}**. Analiza cuidadosamente todos los fragmentos proporcionados antes de responder; si el dato realmente no aparece en ningún fragmento, indícalo con cortesía sin inventar.
+2. No uses tablas para datos simples o puntuales (un solo nombre, RIF, fecha o cifra). Usa tablas Markdown **únicamente** cuando sea necesario listar o comparar múltiples registros o cuando el usuario pida una tabla.
+3. Si el usuario pide un gráfico, incluye un bloque `chart` con JSON válido de Chart.js; si pide un diagrama o flujo, incluye un bloque `mermaid` con sintaxis Mermaid válida."""
 
-        response = generar_respuesta_rapida(prompt_final)
+        # Ejecutar Gemini 3.5 Flash-Lite y creación de metric_id en paralelo
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futuro_llm = executor.submit(generar_respuesta_rapida, prompt_final)
+            futuro_metric = executor.submit(_crear_metric_id, pregunta, ambito_usuario)
+
+            response = futuro_llm.result()
+            metric_id = futuro_metric.result()
+
         latencia_ms = int((time.perf_counter() - inicio_tiempo) * 1000)
+
+        bg = ThreadPoolExecutor(max_workers=1)
+        bg.submit(_actualizar_metrica, metric_id, latencia_ms, similitud_promedio, fuentes_usadas)
+        bg.shutdown(wait=False)
 
         return {
             "respuesta": response.text,
             "fuentes": fuentes_usadas,
             "latencia_ms": latencia_ms,
             "similitud_promedio": similitud_promedio,
+            "metric_id": metric_id,
             "ambito": ambito_usuario
         }
     except Exception as e:
