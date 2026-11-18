@@ -14,18 +14,29 @@
         </div>
         <div class="header-actions">
             <button class="theme-toggle" id="theme-btn" onclick="alternarTema()" title="Cambiar modo claro/oscuro">🌙</button>
-            <button id="logout-btn" class="secondary" onclick="cerrarSesion()" style="display: none; padding: 6px 12px; font-size: 0.82rem;">Cerrar Sesión</button>
             <a href="index.html">← Volver al Chat</a>
+            <button class="danger" onclick="cerrarSesion()" style="padding: 5px 11px; font-size: 0.82rem;">Cerrar Sesión</button>
         </div>
     </header>
 
-    <!-- Pantalla de Autenticación -->
-    <div id="login-section" class="login-box">
-        <h2 style="margin-bottom: 8px;">Acceso Administrativo</h2>
-        <p style="font-size: 0.9rem; color: var(--text-secondary);">Ingresa la clave de administrador de <strong>Victory Logistic</strong> para gestionar la base documental.</p>
-        <input type="password" id="admin-password" placeholder="Contraseña de administrador..." onkeypress="if(event.key==='Enter') iniciarSesion()">
-        <button onclick="iniciarSesion()" style="width: 100%;">Ingresar al Panel</button>
-        <p id="login-error" style="color: #ef4444; font-size: 0.85rem; margin-top: 10px;"></p>
+    <!-- Pantalla de Acceso Directo si entra sin sesión previa -->
+    <div id="login-section" class="auth-wrapper" style="display: none;">
+        <div class="auth-card">
+            <h2 style="margin-bottom: 8px; text-align: center;">Acceso Administrativo</h2>
+            <p style="font-size: 0.88rem; color: var(--text-secondary); text-align: center; margin-bottom: 16px;">
+                Inicia sesión con tu cuenta de administrador de <strong>Victory Logistic</strong>.
+            </p>
+            <div class="form-group">
+                <label>Usuario Administrador</label>
+                <input type="text" id="admin-username" class="form-control" value="admin">
+            </div>
+            <div class="form-group">
+                <label>Contraseña</label>
+                <input type="password" id="admin-password" class="form-control" placeholder="Contraseña..." onkeypress="if(event.key==='Enter') iniciarSesionAdmin()">
+            </div>
+            <button onclick="iniciarSesionAdmin()" style="width: 100%;">Ingresar al Panel</button>
+            <p id="login-error" style="color: #ef4444; font-size: 0.85rem; margin-top: 10px; text-align: center;"></p>
+        </div>
     </div>
 
     <!-- Contenido Protegido del Administrador -->
@@ -79,18 +90,43 @@
             </div>
         </div>
 
-        <!-- Carga de Documentos -->
+        <!-- Carga de Documentos con Selector de Departamento -->
         <div class="card">
-            <h2>Subir Nuevo Documento o Imagen</h2>
+            <h2>Subir Nuevo Documento o Imagen por Departamento</h2>
             <div class="upload-area">
-                <input type="file" id="file-input" accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg" style="margin-bottom: 12px; max-width: 100%;">
-                <br>
-                <button id="upload-btn" onclick="subirArchivo()">Proteger e Indexar Archivo</button>
+                <div class="upload-controls">
+                    <div style="width: 100%; text-align: left;">
+                        <label for="doc-departamento" style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px;">
+                            1. Selecciona el Departamento Destino:
+                        </label>
+                        <select id="doc-departamento" class="form-control">
+                            <option value="">-- Elige un departamento --</option>
+                            <option value="Dispatch">Dispatch</option>
+                            <option value="Managment">Managment</option>
+                            <option value="Track and Trace">Track and Trace</option>
+                            <option value="ELD">ELD</option>
+                            <option value="Maintenance">Maintenance</option>
+                            <option value="Human Resources">Human Resources</option>
+                            <option value="Recruitment">Recruitment</option>
+                            <option value="Accounting">Accounting</option>
+                            <option value="General">General (Visible para toda la empresa)</option>
+                        </select>
+                    </div>
+
+                    <div style="width: 100%; text-align: left;">
+                        <label for="file-input" style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px;">
+                            2. Selecciona el Archivo (PDF, DOCX, XLSX, PNG, JPG):
+                        </label>
+                        <input type="file" id="file-input" accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg" style="max-width: 100%;">
+                    </div>
+
+                    <button id="upload-btn" onclick="subirArchivo()" style="width: 100%;">Proteger e Indexar en Departamento</button>
+                </div>
             </div>
-            <div id="status-message" style="margin-top: 12px; font-size: 0.9rem; font-weight: 500;"></div>
+            <div id="status-message" style="margin-top: 12px; font-size: 0.9rem; font-weight: 500; text-align: center;"></div>
         </div>
 
-        <!-- Inventario Simplificado (Sin columna de Estado) -->
+        <!-- Inventario de Archivos con Departamento -->
         <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 10px; flex-wrap: wrap;">
                 <h2 style="margin: 0; border: none;">Inventario de Archivos Indexados</h2>
@@ -101,11 +137,33 @@
                     <thead>
                         <tr>
                             <th>Nombre del Archivo</th>
+                            <th>Departamento</th>
                             <th style="width: 120px; text-align: center;">Acción</th>
                         </tr>
                     </thead>
                     <tbody id="tabla-inventario">
-                        <tr><td colspan="2" style="text-align: center; color: var(--text-secondary);">Cargando inventario...</td></tr>
+                        <tr><td colspan="3" style="text-align: center; color: var(--text-secondary);">Cargando inventario...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Gestión de Usuarios Registrados -->
+        <div class="card">
+            <h2>Usuarios Registrados por Departamento</h2>
+            <div style="overflow-x: auto;">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Usuario / Correo</th>
+                            <th>Departamento</th>
+                            <th>Rol</th>
+                            <th style="width: 110px; text-align: center;">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-usuarios">
+                        <tr><td colspan="5" style="text-align: center; color: var(--text-secondary);">Cargando usuarios...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -119,6 +177,7 @@
                     <thead>
                         <tr>
                             <th>Pregunta</th>
+                            <th>Ámbito</th>
                             <th>Latencia</th>
                             <th>Similitud</th>
                             <th>Fuentes</th>
@@ -126,7 +185,7 @@
                         </tr>
                     </thead>
                     <tbody id="tabla-metricas">
-                        <tr><td colspan="5" style="text-align: center; color: var(--text-secondary);">Sin consultas registradas aún.</td></tr>
+                        <tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">Sin consultas registradas aún.</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -135,8 +194,11 @@
 
     <script>
         const API_URL = "https://humboldtrag.onrender.com";
+        const DEPARTAMENTOS = [
+            "Dispatch", "Managment", "Track and Trace", "ELD",
+            "Maintenance", "Human Resources", "Recruitment", "Accounting"
+        ];
 
-        // Sincronizar tema claro/oscuro con el chat
         (function inicializarTema() {
             const temaGuardado = localStorage.getItem("vl_theme") || "light";
             document.documentElement.setAttribute("data-theme", temaGuardado);
@@ -159,69 +221,101 @@
 
         document.addEventListener("DOMContentLoaded", () => {
             actualizarIconoTema();
-            const tokenGuardado = sessionStorage.getItem("uah_admin_token");
-            if (tokenGuardado) {
-                validarYMostrarPanel(tokenGuardado);
-            }
+            verificarAccesoAdmin();
         });
 
         function getAuthHeaders() {
-            const token = sessionStorage.getItem("uah_admin_token");
+            const token = localStorage.getItem("vl_token");
             return { "Authorization": `Bearer ${token}` };
         }
 
-        async function iniciarSesion() {
-            const pwd = document.getElementById("admin-password").value.trim();
-            const errorEl = document.getElementById("login-error");
-            if (!pwd) return;
+        async function verificarAccesoAdmin() {
+            const token = localStorage.getItem("vl_token");
+            if (!token) {
+                document.getElementById("login-section").style.display = "flex";
+                return;
+            }
 
-            errorEl.textContent = "Verificando credenciales...";
-            await validarYMostrarPanel(pwd);
-        }
-
-        async function validarYMostrarPanel(token) {
-            const errorEl = document.getElementById("login-error");
             try {
-                const res = await fetch(`${API_URL}/admin/verificar`, {
-                    headers: { "Authorization": `Bearer ${token}` }
-                });
-                if (!res.ok) throw new Error("Credenciales inválidas");
-
-                sessionStorage.setItem("uah_admin_token", token);
+                const res = await fetch(`${API_URL}/auth/me`, { headers: getAuthHeaders() });
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                if (data.usuario.rol !== "admin") {
+                    alert("Tu cuenta no tiene permisos de administrador.");
+                    window.location.href = "index.html";
+                    return;
+                }
                 document.getElementById("login-section").style.display = "none";
                 document.getElementById("admin-content").style.display = "block";
-                document.getElementById("logout-btn").style.display = "inline-block";
-                errorEl.textContent = "";
                 cargarDashboard();
             } catch {
-                sessionStorage.removeItem("uah_admin_token");
-                errorEl.textContent = "Contraseña incorrecta o servidor no disponible.";
+                localStorage.removeItem("vl_token");
+                document.getElementById("login-section").style.display = "flex";
+            }
+        }
+
+        async function iniciarSesionAdmin() {
+            const username = document.getElementById("admin-username").value.trim();
+            const password = document.getElementById("admin-password").value;
+            const errorEl = document.getElementById("login-error");
+
+            if (!username || !password) return;
+            errorEl.textContent = "Verificando credenciales...";
+
+            try {
+                const res = await fetch(`${API_URL}/auth/login`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || "Credenciales inválidas");
+                if (data.usuario.rol !== "admin") throw new Error("Este usuario no tiene rol de administrador.");
+
+                localStorage.setItem("vl_token", data.token);
+                localStorage.setItem("vl_user", JSON.stringify(data.usuario));
+                document.getElementById("login-section").style.display = "none";
+                document.getElementById("admin-content").style.display = "block";
+                errorEl.textContent = "";
+                cargarDashboard();
+            } catch (err) {
+                errorEl.textContent = err.message;
             }
         }
 
         function cerrarSesion() {
-            sessionStorage.removeItem("uah_admin_token");
-            location.reload();
+            localStorage.removeItem("vl_token");
+            localStorage.removeItem("vl_user");
+            window.location.href = "index.html";
         }
 
         async function subirArchivo() {
+            const deptoSelect = document.getElementById("doc-departamento");
             const fileInput = document.getElementById("file-input");
             const uploadBtn = document.getElementById("upload-btn");
             const statusDiv = document.getElementById("status-message");
 
+            const departamento = deptoSelect.value;
+            if (!departamento) {
+                statusDiv.style.color = "#ef4444";
+                statusDiv.innerText = "Por favor selecciona primero el departamento destino.";
+                return;
+            }
+
             if (fileInput.files.length === 0) {
                 statusDiv.style.color = "#ef4444";
-                statusDiv.innerText = "Por favor selecciona un archivo primero.";
+                statusDiv.innerText = "Por favor selecciona un archivo.";
                 return;
             }
 
             const archivo = fileInput.files[0];
             const formData = new FormData();
             formData.append("file", archivo);
+            formData.append("departamento", departamento);
 
             uploadBtn.disabled = true;
             statusDiv.style.color = "var(--brand-accent)";
-            statusDiv.innerText = `Subiendo "${archivo.name}" al servidor...`;
+            statusDiv.innerText = `Subiendo "${archivo.name}" al departamento ${departamento}...`;
 
             try {
                 const response = await fetch(`${API_URL}/admin/subir`, {
@@ -279,6 +373,7 @@
 
         async function cargarDashboard() {
             const tbody = document.getElementById("tabla-inventario");
+            const tbodyUsuarios = document.getElementById("tabla-usuarios");
             const tbodyMetricas = document.getElementById("tabla-metricas");
 
             try {
@@ -298,25 +393,62 @@
                         data.kpis.tasa_satisfaccion_pct !== null ? `${data.kpis.tasa_satisfaccion_pct}%` : "N/A";
                 }
 
-                // Renderizar tabla simplificada: Nombre + Botón Eliminar
+                // 1. Inventario de Archivos con Departamento
                 const archivos = data.archivos || [];
                 if (archivos.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="2" style="text-align: center; color: var(--text-secondary);">No hay archivos indexados en la base de datos.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--text-secondary);">No hay archivos indexados en la base de datos.</td></tr>`;
                 } else {
                     tbody.innerHTML = "";
-                    archivos.forEach(nombreArchivo => {
+                    archivos.forEach(item => {
+                        const nombre = typeof item === "string" ? item : item.nombre;
+                        const depto = typeof item === "string" ? "General" : item.departamento;
                         const tr = document.createElement("tr");
                         tr.innerHTML = `
-                            <td><b>${nombreArchivo}</b></td>
+                            <td><b>${nombre}</b></td>
+                            <td><span class="dept-badge">${depto}</span></td>
                             <td style="text-align: center;">
-                                <button class="danger" onclick="eliminarArchivo('${nombreArchivo.replace(/'/g, "\\'")}')" style="padding: 5px 12px; font-size: 0.8rem;">Eliminar</button>
+                                <button class="danger" onclick="eliminarArchivo('${nombre.replace(/'/g, "\\'")}')" style="padding: 5px 12px; font-size: 0.8rem;">Eliminar</button>
                             </td>
                         `;
                         tbody.appendChild(tr);
                     });
                 }
 
-                // Renderizar auditoría de consultas
+                // 2. Usuarios Registrados
+                const usuarios = data.usuarios || [];
+                if (usuarios.length === 0) {
+                    tbodyUsuarios.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-secondary);">Aún no hay empleados registrados.</td></tr>`;
+                } else {
+                    tbodyUsuarios.innerHTML = "";
+                    usuarios.forEach(u => {
+                        const opcionesDepto = DEPARTAMENTOS.map(d =>
+                            `<option value="${d}" ${u.departamento === d ? "selected" : ""}>${d}</option>`
+                        ).join("");
+
+                        const tr = document.createElement("tr");
+                        tr.innerHTML = `
+                            <td><b>${u.nombre}</b></td>
+                            <td>${u.username}</td>
+                            <td>
+                                <select class="form-control" style="padding: 4px 8px; font-size: 0.84rem;" onchange="actualizarUsuario(${u.id}, null, this.value)">
+                                    ${opcionesDepto}
+                                </select>
+                            </td>
+                            <td>
+                                <select class="form-control" style="padding: 4px 8px; font-size: 0.84rem;" onchange="actualizarUsuario(${u.id}, this.value, null)">
+                                    <option value="usuario" ${u.rol === "usuario" ? "selected" : ""}>Usuario</option>
+                                    <option value="admin" ${u.rol === "admin" ? "selected" : ""}>Administrador</option>
+                                </select>
+                            </td>
+                            <td style="text-align: center;">
+                                <button class="danger" onclick="eliminarUsuario(${u.id}, '${u.nombre.replace(/'/g, "\\'")}')" style="padding: 5px 10px; font-size: 0.8rem;">Eliminar</button>
+                            </td>
+                        `;
+                        tbodyUsuarios.appendChild(tr);
+                    });
+                }
+
+                // 3. Auditoría de Consultas
                 const consultas = data.ultimas_consultas || [];
                 if (consultas.length > 0) {
                     tbodyMetricas.innerHTML = "";
@@ -326,6 +458,7 @@
                         const tr = document.createElement("tr");
                         tr.innerHTML = `
                             <td>${c.pregunta}</td>
+                            <td><span class="dept-badge">${c.departamento || "General"}</span></td>
                             <td>${c.latencia_ms} ms</td>
                             <td>${(c.similitud_promedio * 100).toFixed(1)}%</td>
                             <td>${fuentesStr}</td>
@@ -336,7 +469,42 @@
                 }
             } catch (error) {
                 console.error(error);
-                tbody.innerHTML = `<tr><td colspan="2" style="text-align: center; color: #ef4444;">Error al cargar datos del servidor.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #ef4444;">Error al cargar datos del servidor.</td></tr>`;
+            }
+        }
+
+        async function actualizarUsuario(userId, nuevoRol, nuevoDepto) {
+            try {
+                const payload = {};
+                if (nuevoRol) payload.rol = nuevoRol;
+                if (nuevoDepto) payload.departamento = nuevoDepto;
+
+                const res = await fetch(`${API_URL}/admin/usuarios/${userId}`, {
+                    method: "PUT",
+                    headers: {
+                        "Content-Type": "application/json",
+                        ...getAuthHeaders()
+                    },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error();
+            } catch {
+                alert("No se pudo actualizar el usuario.");
+                cargarDashboard();
+            }
+        }
+
+        async function eliminarUsuario(userId, nombre) {
+            if (!confirm(`¿Eliminar la cuenta de "${nombre}"?`)) return;
+            try {
+                const res = await fetch(`${API_URL}/admin/usuarios/${userId}`, {
+                    method: "DELETE",
+                    headers: getAuthHeaders()
+                });
+                if (!res.ok) throw new Error();
+                cargarDashboard();
+            } catch {
+                alert("No se pudo eliminar el usuario.");
             }
         }
 
