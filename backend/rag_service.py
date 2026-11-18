@@ -3,6 +3,7 @@ import re
 import time
 import hashlib
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 import pypdf
 import docx
 import pandas as pd
@@ -32,7 +33,7 @@ _CACHE_INVENTARIO = {
     "timestamp": 0.0,
     "datos": []
 }
-CACHE_TTL_SEGUNDOS = 60.0
+CACHE_TTL_SEGUNDOS = 120.0
 
 
 def invalidar_cache_inventario():
@@ -148,16 +149,15 @@ def eliminar_usuario_admin(user_id: int):
 
 
 # =========================================================
-# PROCESAMIENTO DOCUMENTAL Y REINTENTOS ANTE ERRORES 503/429
+# GENERACIÓN RÁPIDA CON FALLBACK INMEDIATO (SIN ESPERAS MUERTAS)
 # =========================================================
 
-def generar_respuesta_con_reintento(contents, max_reintentos: int = 3):
-    """Llama a Gemini con reintentos automáticos y fallback si el modelo reporta 503 UNAVAILABLE."""
-    modelos = ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite"]
+def generar_respuesta_con_reintento(contents):
+    """Usa gemini-2.5-flash-lite como modelo principal de baja latencia con fallback inmediato."""
+    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash-lite"]
     ultimo_error = None
 
-    for intento in range(max_reintentos):
-        modelo_actual = modelos[min(intento, len(modelos) - 1)]
+    for modelo_actual in modelos:
         try:
             return gemini_client.models.generate_content(
                 model=modelo_actual,
@@ -166,10 +166,8 @@ def generar_respuesta_con_reintento(contents, max_reintentos: int = 3):
         except Exception as e:
             ultimo_error = e
             msg = str(e)
-            if any(code in msg for code in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "overloaded"]):
-                if intento < max_reintentos - 1:
-                    time.sleep(1.5 * (intento + 1))
-                    continue
+            if any(code in msg for code in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "overloaded", "404"]):
+                continue
             raise e
     raise ultimo_error
 
@@ -256,7 +254,7 @@ def extraer_unidades_de_archivo(ruta_archivo: str) -> list[tuple[str | None, str
         raise ValueError(f"Formato .{extension} no compatible.")
 
 
-def generar_embeddings_con_reintento(textos: list[str], max_reintentos: int = 4):
+def generar_embeddings_con_reintento(textos: list[str], max_reintentos: int = 3):
     for intento in range(max_reintentos):
         try:
             return gemini_client.models.embed_content(
@@ -268,7 +266,7 @@ def generar_embeddings_con_reintento(textos: list[str], max_reintentos: int = 4)
             mensaje_error = str(e)
             if any(code in mensaje_error for code in ["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"]):
                 match_segundos = re.search(r"retry in (\d+(?:\.\d+)?)s", mensaje_error, re.IGNORECASE)
-                espera = float(match_segundos.group(1)) + 2.0 if match_segundos else 15.0
+                espera = float(match_segundos.group(1)) + 2.0 if match_segundos else 10.0
                 if intento < max_reintentos - 1:
                     time.sleep(espera)
                     continue
@@ -372,7 +370,7 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
 
 
 # =========================================================
-# FAST-PATH CONVERSACIONAL Y CONSULTA RAG ULTRA-RÁPIDA
+# CONSULTA RAG DE ALTA VELOCIDAD
 # =========================================================
 
 def es_interaccion_casual(pregunta: str) -> str | None:
@@ -472,6 +470,35 @@ def recuperar_documento_completo(
     return datos
 
 
+def _crear_registro_metrica_inicial(pregunta: str, ambito: str) -> int | None:
+    try:
+        res = supabase.table("rag_metrics").insert({
+            "pregunta": pregunta,
+            "latencia_ms": 0,
+            "similitud_promedio": 0.0,
+            "fuentes_usadas": [],
+            "departamento": ambito
+        }).execute()
+        if res.data:
+            return res.data[0]["id"]
+    except Exception:
+        pass
+    return None
+
+
+def _actualizar_metrica_final(metric_id: int | None, latencia_ms: int, similitud_promedio: float, fuentes_usadas: list[str]):
+    if not metric_id:
+        return
+    try:
+        supabase.table("rag_metrics").update({
+            "latencia_ms": latencia_ms,
+            "similitud_promedio": similitud_promedio,
+            "fuentes_usadas": fuentes_usadas
+        }).eq("id", metric_id).execute()
+    except Exception:
+        pass
+
+
 def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: dict = None, filtro_admin_depto: str = None) -> dict:
     inicio_tiempo = time.perf_counter()
     historial = historial or []
@@ -493,6 +520,8 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
         depto_efectivo = filtro_admin_depto if (filtro_admin_depto and filtro_admin_depto != "Todos") else None
     else:
         depto_efectivo = usuario_actual.get("departamento")
+
+    ambito_usuario = depto_efectivo if depto_efectivo else "Todos los departamentos (Admin)"
 
     try:
         metadata_rows = obtener_metadatos_cacheados()
@@ -543,7 +572,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
                     "query_embedding": vector_pregunta,
                     "filter_departamento": depto_efectivo,
                     "match_threshold": 0.30,
-                    "match_count": 8
+                    "match_count": 6
                 }
             ).execute()
 
@@ -555,9 +584,9 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
                 c = re.sub(r"^\[Departamento: [^\]]+\]\n?", "", item["content"])
                 partes_limpias.append(c)
             etiqueta_hoja = f" | Hoja: {hoja_objetivo}" if hoja_objetivo else ""
-            contexto = f"=== CONTENIDO ÍNTEGRO: {archivo_objetivo}{etiqueta_hoja} ({len(fragmentos)} bloques procesados) ===\n" + "\n".join(partes_limpias)
+            contexto = f"=== CONTENIDO ÍNTEGRO: {archivo_objetivo}{etiqueta_hoja} ({len(fragmentos)} bloques) ===\n" + "\n".join(partes_limpias)
         else:
-            contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante en los documentos disponibles para este departamento."
+            contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "Sin coincidencias en los documentos del departamento."
 
         fuentes_usadas = sorted(list({
             f"{item['metadata']['fuente']} (Hoja: {item['metadata']['hoja']})" if item.get("metadata", {}).get("hoja") else item["metadata"]["fuente"]
@@ -570,50 +599,40 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
         texto_historial = ""
         if historial:
             lineas_hist = [f"- {'Usuario' if m.get('rol') == 'user' else 'Asistente'}: {m.get('texto', '')}" for m in historial[-2:]]
-            texto_historial = "[HISTORIAL RECIENTE]:\n" + "\n".join(lineas_hist) + "\n\n"
+            texto_historial = "[HISTORIAL]:\n" + "\n".join(lineas_hist) + "\n\n"
 
-        info_hojas_excel = f"\n[HOJAS EXCEL]: {mapa_hojas}\n" if mapa_hojas else ""
-        ambito_usuario = depto_efectivo if depto_efectivo else "Todos los departamentos (Admin)"
+        info_hojas_excel = f" | Hojas Excel: {mapa_hojas}" if mapa_hojas else ""
 
         prompt_final = f"""
         Eres el Asistente Corporativo oficial de **Victory Logistic**.
-        Usuario: **{usuario_actual.get('nombre')}** (Rol: {usuario_actual.get('rol')}, Ámbito: **{ambito_usuario}**).
-
-        [ARCHIVOS ACCESIBLES]: {inventario_archivos}{info_hojas_excel}
+        Usuario: **{usuario_actual.get('nombre')}** (Ámbito autorizado: **{ambito_usuario}**).
+        Archivos accesibles: {inventario_archivos}{info_hojas_excel}
         {texto_historial}[CONTEXTO]:
         {contexto}
 
-        [PREGUNTA]:
-        {pregunta}
+        [PREGUNTA]: {pregunta}
 
-        Reglas estrictas:
-        1. **Confidencialidad Departamental:** Responde únicamente con información de los documentos autorizados (**{ambito_usuario}**). Si el dato no aparece en el contexto, dilo con cortesía sin inventar.
-        2. **Análisis Completo:** Si el usuario pide analizar un documento grande por completo, indícale que escriba *"analiza el archivo completo [nombre]"*.
-        3. **Tablas Opcionales:** NO uses tablas para datos simples o puntuales (un solo RIF, nombre o dirección). Usa tablas Markdown **solo** cuando el usuario pida una tabla o sea necesario listar múltiples registros.
-        4. **Gráficos (Chart.js):** Si se pide un gráfico, incluye un bloque `chart` con JSON válido:
-           ```chart
-           {{ "type": "bar", "data": {{ "labels": ["A", "B"], "datasets": [{{ "label": "Serie", "data": [10, 20] }}] }} }}
-           ```
-        5. **Diagramas (Mermaid.js):** Si se pide un diagrama o flujo, incluye un bloque `mermaid` con sintaxis válida.
+        Reglas:
+        1. Responde solo con datos de **{ambito_usuario}**. Si no está en el contexto, dilo con cortesía.
+        2. Si piden analizar todo un archivo grande, indica escribir *"analiza el archivo completo [nombre]"*.
+        3. No uses tablas para respuestas simples o datos puntuales; úsalas solo para comparar o listar múltiples registros.
+        4. Si piden gráfico, usa bloque `chart` con JSON válido de Chart.js; si piden diagrama, bloque `mermaid`.
         """
 
-        response = generar_respuesta_con_reintento(prompt_final)
+        # Ejecutar generación del LLM y creación del metric_id en paralelo para no sumar latencia
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futuro_llm = executor.submit(generar_respuesta_con_reintento, prompt_final)
+            futuro_metric = executor.submit(_crear_registro_metrica_inicial, pregunta, ambito_usuario)
+
+            response = futuro_llm.result()
+            metric_id = futuro_metric.result()
 
         latencia_ms = int((time.perf_counter() - inicio_tiempo) * 1000)
 
-        metric_id = None
-        try:
-            res_metric = supabase.table("rag_metrics").insert({
-                "pregunta": pregunta,
-                "latencia_ms": latencia_ms,
-                "similitud_promedio": similitud_promedio,
-                "fuentes_usadas": fuentes_usadas,
-                "departamento": ambito_usuario
-            }).execute()
-            if res_metric.data:
-                metric_id = res_metric.data[0]["id"]
-        except Exception:
-            pass
+        # Actualizar latencia real y fuentes en segundo plano
+        executor_bg = ThreadPoolExecutor(max_workers=1)
+        executor_bg.submit(_actualizar_metrica_final, metric_id, latencia_ms, similitud_promedio, fuentes_usadas)
+        executor_bg.shutdown(wait=False)
 
         return {
             "respuesta": response.text,
