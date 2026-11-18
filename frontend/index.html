@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Asistente Corporativo - Victory Logistic</title>
+    <title>Portal Corporativo IA - Victory Logistic</title>
     <link rel="stylesheet" href="styles.css">
-    <!-- Librerías de Markdown, Seguridad XSS, Gráficos y Diagramas -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
@@ -18,22 +17,91 @@
             <h1>Victory Logistic · Asistente IA</h1>
             <div class="status-badge" id="server-status">
                 <span class="status-dot" id="status-dot"></span>
-                <span id="status-text">Conectando motor IA...</span>
+                <span id="status-text">Conectando...</span>
             </div>
+            <span class="user-pill" id="header-user-info" style="display: none;"></span>
         </div>
         <div class="header-actions">
+            <!-- Selector exclusivo para Administradores para filtrar departamento en el chat -->
+            <select id="admin-dept-filter" class="header-select" style="display: none;" title="Filtrar consultas por departamento">
+                <option value="Todos">Todos los Departamentos</option>
+                <option value="Dispatch">Dispatch</option>
+                <option value="Managment">Managment</option>
+                <option value="Track and Trace">Track and Trace</option>
+                <option value="ELD">ELD</option>
+                <option value="Maintenance">Maintenance</option>
+                <option value="Human Resources">Human Resources</option>
+                <option value="Recruitment">Recruitment</option>
+                <option value="Accounting">Accounting</option>
+                <option value="General">General</option>
+            </select>
+
             <button class="theme-toggle" id="theme-btn" onclick="alternarTema()" title="Cambiar modo claro/oscuro">🌙</button>
-            <button class="secondary" onclick="limpiarChat()" style="padding: 6px 12px; font-size: 0.82rem;">Nueva Consulta</button>
-            <a href="admin.html">Administración →</a>
+            <button id="btn-nueva-consulta" class="secondary" onclick="limpiarChat()" style="display: none; padding: 5px 11px; font-size: 0.82rem;">Nueva Consulta</button>
+            <a id="link-admin" href="admin.html" style="display: none;">Panel Admin →</a>
+            <button id="btn-logout" class="danger" onclick="cerrarSesion()" style="display: none; padding: 5px 11px; font-size: 0.82rem;">Salir</button>
         </div>
     </header>
 
-    <div id="chat-container">
-        <div id="chat-messages">
-            <div class="message bot">
-                <div class="msg-content">Hola. Soy el asistente corporativo de <strong>Victory Logistic</strong>. Puedes consultarme sobre documentos operativos, normativas, reportes o imágenes indexadas en nuestra base de conocimiento.</div>
+    <!-- PANTALLA DE LOGIN / REGISTRO -->
+    <div id="auth-screen" class="auth-wrapper">
+        <div class="auth-card">
+            <div class="auth-tabs">
+                <button class="auth-tab active" id="tab-login" onclick="mostrarTabAuth('login')">Iniciar Sesión</button>
+                <button class="auth-tab" id="tab-register" onclick="mostrarTabAuth('register')">Registrarse</button>
             </div>
+
+            <!-- Formulario Login -->
+            <div id="form-login">
+                <div class="form-group">
+                    <label>Usuario o Correo Corporativo</label>
+                    <input type="text" id="login-username" class="form-control" placeholder="ej: jperez o admin" onkeypress="if(event.key==='Enter') iniciarSesionUsuario()">
+                </div>
+                <div class="form-group">
+                    <label>Contraseña</label>
+                    <input type="password" id="login-password" class="form-control" placeholder="••••••••" onkeypress="if(event.key==='Enter') iniciarSesionUsuario()">
+                </div>
+                <button id="btn-login-submit" onclick="iniciarSesionUsuario()" style="width: 100%; margin-top: 6px;">Entrar al Sistema</button>
+            </div>
+
+            <!-- Formulario Registro -->
+            <div id="form-register" style="display: none;">
+                <div class="form-group">
+                    <label>Nombre y Apellido</label>
+                    <input type="text" id="reg-nombre" class="form-control" placeholder="ej: Juan Pérez">
+                </div>
+                <div class="form-group">
+                    <label>Usuario o Correo Corporativo</label>
+                    <input type="text" id="reg-username" class="form-control" placeholder="ej: jperez@victorylogistic.com">
+                </div>
+                <div class="form-group">
+                    <label>Departamento</label>
+                    <select id="reg-departamento" class="form-control">
+                        <option value="">-- Selecciona tu departamento --</option>
+                        <option value="Dispatch">Dispatch</option>
+                        <option value="Managment">Managment</option>
+                        <option value="Track and Trace">Track and Trace</option>
+                        <option value="ELD">ELD</option>
+                        <option value="Maintenance">Maintenance</option>
+                        <option value="Human Resources">Human Resources</option>
+                        <option value="Recruitment">Recruitment</option>
+                        <option value="Accounting">Accounting</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Contraseña</label>
+                    <input type="password" id="reg-password" class="form-control" placeholder="Mínimo 4 caracteres" onkeypress="if(event.key==='Enter') registrarNuevoUsuario()">
+                </div>
+                <button id="btn-reg-submit" onclick="registrarNuevoUsuario()" style="width: 100%; margin-top: 6px;">Crear Cuenta</button>
+            </div>
+
+            <p id="auth-message" style="color: #ef4444; font-size: 0.85rem; margin-top: 12px; text-align: center;"></p>
         </div>
+    </div>
+
+    <!-- CONTENEDOR DEL CHAT (Visible tras iniciar sesión) -->
+    <div id="chat-container" style="display: none;">
+        <div id="chat-messages"></div>
         
         <div id="chat-input-area">
             <input type="text" id="user-input" placeholder="Escribe tu consulta para Victory Logistic..." autocomplete="off">
