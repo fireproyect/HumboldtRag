@@ -170,7 +170,10 @@ function activarInterfazChat(usuario, token) {
     localStorage.setItem("vl_token", token);
     localStorage.setItem("vl_user", JSON.stringify(usuario));
 
-    document.getElementById("auth-screen").style.display = "none";
+    // Eliminar completamente el bloque de login del DOM para que el navegador no pida actualizar contraseñas al chatear
+    const authScreen = document.getElementById("auth-screen");
+    if (authScreen) authScreen.remove();
+
     document.getElementById("chat-container").style.display = "flex";
     document.getElementById("btn-nueva-consulta").style.display = "inline-block";
     document.getElementById("btn-logout").style.display = "inline-block";
@@ -275,7 +278,6 @@ async function enviarMensaje() {
         document.getElementById("status-text").textContent = "Sistema Activo";
 
         await appendMessage(data.respuesta, "bot", {
-            fuentes: data.fuentes,
             latencia: data.latencia_ms,
             metricId: data.metric_id
         });
@@ -324,24 +326,16 @@ async function appendMessage(texto, remitente, meta = {}) {
     }
 
     let footerHtml = "";
-    if (remitente === "bot" && (meta.fuentes?.length || meta.metricId)) {
-        const fuentesTexto = meta.fuentes && meta.fuentes.length > 0
-            ? `<b>Fuentes:</b> ${meta.fuentes.join(", ")}`
-            : `<b>Fuentes:</b> Sin coincidencia documental`;
-
-        const tiempoTexto = meta.latencia ? ` · ${(meta.latencia / 1000).toFixed(2)}s` : "";
-
-        const feedbackHtml = meta.metricId ? `
-            <div class="feedback-btns" id="fb-group-${meta.metricId}">
-                <button class="fb-btn" onclick="enviarFeedback(${meta.metricId}, 1, this)" title="Respuesta útil">👍 Útil</button>
-                <button class="fb-btn" onclick="enviarFeedback(${meta.metricId}, -1, this)" title="Respuesta imprecisa">👎 Mejorar</button>
-            </div>
-        ` : "";
+    if (remitente === "bot" && meta.metricId) {
+        const tiempoTexto = meta.latencia ? `Respondido en ${(meta.latencia / 1000).toFixed(2)}s` : "";
 
         footerHtml = `
             <div class="msg-footer">
-                <span>${fuentesTexto}${tiempoTexto}</span>
-                ${feedbackHtml}
+                <span>${tiempoTexto}</span>
+                <div class="feedback-btns" id="fb-group-${meta.metricId}">
+                    <button type="button" class="fb-btn" onclick="enviarFeedback(${meta.metricId}, 1, this)" title="Respuesta útil">👍 Útil</button>
+                    <button type="button" class="fb-btn" onclick="enviarFeedback(${meta.metricId}, -1, this)" title="Respuesta imprecisa">👎 Mejorar</button>
+                </div>
             </div>
         `;
     }
