@@ -20,6 +20,7 @@ from rag_service import (
     actualizar_usuario_admin,
     eliminar_usuario_admin,
     consultar_rag,
+    registrar_metrica_en_segundo_plano,
     procesar_y_guardar_archivo,
     eliminar_documento_por_fuente,
     registrar_feedback_metrica,
@@ -31,7 +32,7 @@ load_dotenv()
 app = FastAPI(
     title="Humboldt RAG Backend Multimodal e Híbrido",
     description="Backend oficial para trabajo de grado - Universidad Alejandro de Humboldt",
-    version="5.0"
+    version="5.1"
 )
 
 ALLOWED_ORIGINS = [
@@ -52,15 +53,11 @@ app.add_middleware(
 estado_tareas: dict[str, dict] = {}
 
 
-# =========================================================
-# TOKENS FIRMADOS (HMAC-SHA256)
-# =========================================================
-
 def generar_token_sesion(usuario: dict) -> str:
     secret = os.getenv("ADMIN_SECRET_KEY", "victory_logistic_default_secret")
     payload = {
         **usuario,
-        "exp": int(time.time()) + 86400 * 7  # Válido por 7 días
+        "exp": int(time.time()) + 86400 * 7
     }
     payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
     firma = hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
@@ -95,10 +92,6 @@ def verificar_admin(usuario: dict = Depends(obtener_usuario_actual)) -> dict:
     return usuario
 
 
-# =========================================================
-# ESQUEMAS PYDANTIC
-# =========================================================
-
 class RegistroRequest(BaseModel):
     nombre: str
     username: str
@@ -131,10 +124,6 @@ class FeedbackRequest(BaseModel):
     metric_id: int
     feedback: int
 
-
-# =========================================================
-# ENDPOINTS DE AUTENTICACIÓN Y USUARIOS
-# =========================================================
 
 @app.get("/auth/departamentos")
 def get_departamentos():
@@ -170,22 +159,29 @@ def endpoint_me(usuario: dict = Depends(obtener_usuario_actual)):
     return {"status": "authenticated", "usuario": usuario}
 
 
-# =========================================================
-# ENDPOINTS DE CHAT RAG
-# =========================================================
-
 @app.post("/chat")
-def chat_endpoint(request: QueryRequest, usuario: dict = Depends(obtener_usuario_actual)):
+def chat_endpoint(request: QueryRequest, background_tasks: BackgroundTasks, usuario: dict = Depends(obtener_usuario_actual)):
     if not request.pregunta.strip():
         raise HTTPException(status_code=400, detail="La pregunta no puede estar vacía.")
     try:
         historial_dict = [m.model_dump() for m in request.historial]
-        return consultar_rag(
+        resultado = consultar_rag(
             pregunta=request.pregunta,
             historial=historial_dict,
             usuario_actual=usuario,
             filtro_admin_depto=request.filtro_departamento
         )
+        # Guardar métrica en Supabase DESPUÉS de enviar la respuesta (0 ms de espera para el usuario)
+        if resultado.get("ambito") != "Casual":
+            background_tasks.add_task(
+                registrar_metrica_en_segundo_plano,
+                request.pregunta,
+                resultado["latencia_ms"],
+                resultado["similitud_promedio"],
+                resultado["fuentes"],
+                resultado["ambito"]
+            )
+        return resultado
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -200,10 +196,6 @@ def feedback_endpoint(request: FeedbackRequest, usuario: dict = Depends(obtener_
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# =========================================================
-# ENDPOINTS DE ADMINISTRACIÓN
-# =========================================================
 
 def tarea_indexar_en_segundo_plano(task_id: str, ruta_temporal: str, nombre_original: str, departamento: str):
     try:
@@ -304,4 +296,4 @@ def borrar_usuario(user_id: int):
 
 @app.get("/")
 def root():
-    return {"status": "Backend Victory Logistic RAG v5.0 operando en Render"}
+    return {"status": "Backend Victory Logistic RAG v5.1 operando en Render"}
