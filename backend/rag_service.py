@@ -1,6 +1,8 @@
 import os
 import re
 import time
+import hashlib
+import secrets
 import pypdf
 import docx
 import pandas as pd
@@ -14,9 +16,122 @@ load_dotenv()
 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY"))
 
+DEPARTAMENTOS_VALIDOS = [
+    "Dispatch",
+    "Managment",
+    "Track and Trace",
+    "ELD",
+    "Maintenance",
+    "Human Resources",
+    "Recruitment",
+    "Accounting",
+    "General"
+]
+
+
+# =========================================================
+# GESTIÓN DE USUARIOS Y SEGURIDAD DE CONTRASEÑAS
+# =========================================================
+
+def hashear_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    pwd_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000).hex()
+    return f"{salt}${pwd_hash}"
+
+
+def verificar_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt, original_hash = stored_hash.split("$", 1)
+        check_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000).hex()
+        return secrets.compare_digest(check_hash, original_hash)
+    except Exception:
+        return False
+
+
+def registrar_usuario(nombre: str, username: str, password: str, departamento: str) -> dict:
+    username_limpio = username.strip().lower()
+    if departamento not in DEPARTAMENTOS_VALIDOS or departamento == "General":
+        raise ValueError("Departamento no válido.")
+    if len(password) < 4:
+        raise ValueError("La contraseña debe tener al menos 4 caracteres.")
+
+    existente = supabase.table("usuarios").select("id").eq("username", username_limpio).execute()
+    if existente.data:
+        raise ValueError("El nombre de usuario o correo ya está registrado.")
+
+    res = supabase.table("usuarios").insert({
+        "nombre": nombre.strip(),
+        "username": username_limpio,
+        "password_hash": hashear_password(password),
+        "rol": "usuario",
+        "departamento": departamento
+    }).execute()
+
+    usuario = res.data[0]
+    return {
+        "id": usuario["id"],
+        "nombre": usuario["nombre"],
+        "username": usuario["username"],
+        "rol": usuario["rol"],
+        "departamento": usuario["departamento"]
+    }
+
+
+def autenticar_usuario(username: str, password: str) -> dict:
+    username_limpio = username.strip().lower()
+    admin_secret = os.getenv("ADMIN_SECRET_KEY", "")
+
+    # Permitir acceso directo del Administrador Maestro con usuario "admin" + ADMIN_SECRET_KEY
+    if username_limpio == "admin" and admin_secret and secrets.compare_digest(password, admin_secret):
+        return {
+            "id": 0,
+            "nombre": "Administrador Victory Logistic",
+            "username": "admin",
+            "rol": "admin",
+            "departamento": "Todos"
+        }
+
+    res = supabase.table("usuarios").select("*").eq("username", username_limpio).execute()
+    if not res.data:
+        raise ValueError("Usuario o contraseña incorrectos.")
+
+    user_db = res.data[0]
+    if not verificar_password(password, user_db["password_hash"]):
+        raise ValueError("Usuario o contraseña incorrectos.")
+
+    return {
+        "id": user_db["id"],
+        "nombre": user_db["nombre"],
+        "username": user_db["username"],
+        "rol": user_db["rol"],
+        "departamento": user_db["departamento"]
+    }
+
+
+def listar_usuarios() -> list[dict]:
+    res = supabase.table("usuarios").select("id, created_at, nombre, username, rol, departamento").order("created_at", desc=True).execute()
+    return res.data or []
+
+
+def actualizar_usuario_admin(user_id: int, rol: str = None, departamento: str = None):
+    updates = {}
+    if rol in ("admin", "usuario"):
+        updates["rol"] = rol
+    if departamento in DEPARTAMENTOS_VALIDOS:
+        updates["departamento"] = departamento
+    if updates:
+        supabase.table("usuarios").update(updates).eq("id", user_id).execute()
+
+
+def eliminar_usuario_admin(user_id: int):
+    supabase.table("usuarios").delete().eq("id", user_id).execute()
+
+
+# =========================================================
+# PROCESAMIENTO DOCUMENTAL Y VECTORIZACIÓN POR DEPARTAMENTO
+# =========================================================
 
 def dividir_texto_recursivo(texto: str, tamano_chunk: int = 1000, solapamiento: int = 200) -> list[str]:
-    """Divide el texto respetando párrafos, saltos de línea y oraciones sin cortar palabras."""
     separadores = ["\n\n", "\n", ". ", " "]
     
     def _split(text: str, seps: list[str]) -> list[str]:
@@ -52,10 +167,6 @@ def dividir_texto_recursivo(texto: str, tamano_chunk: int = 1000, solapamiento: 
 
 
 def extraer_unidades_de_archivo(ruta_archivo: str) -> list[tuple[str | None, str]]:
-    """
-    Extrae el texto del archivo devolviendo una lista de tuplas (nombre_hoja, texto).
-    Para PDF y Word, nombre_hoja es None. Para Excel, devuelve cada hoja por separado con su nombre exacto.
-    """
     extension = ruta_archivo.lower().split('.')[-1]
 
     if extension == "pdf":
@@ -103,7 +214,6 @@ def extraer_unidades_de_archivo(ruta_archivo: str) -> list[tuple[str | None, str
 
 
 def generar_embeddings_con_reintento(textos: list[str], max_reintentos: int = 4):
-    """Genera embeddings respetando el límite de 30,000 tokens/minuto del Free Tier con espera automática."""
     for intento in range(max_reintentos):
         try:
             return gemini_client.models.embed_content(
@@ -122,10 +232,12 @@ def generar_embeddings_con_reintento(textos: list[str], max_reintentos: int = 4)
             raise e
 
 
-def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
-    """Procesa documentos o imágenes, guarda nombres de hojas en Excel y vectoriza respetando cuotas."""
-    extension = ruta_archivo.lower().split('.')[-1]
+def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departamento: str = "General") -> int:
+    """Procesa documentos o imágenes asignándoles su departamento correspondiente."""
+    if departamento not in DEPARTAMENTOS_VALIDOS:
+        raise ValueError(f"Departamento '{departamento}' no reconocido.")
 
+    extension = ruta_archivo.lower().split('.')[-1]
     eliminar_documento_por_fuente(nombre_original)
 
     if extension in ["png", "jpg", "jpeg"]:
@@ -147,14 +259,18 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
             except Exception:
                 pass
 
-        contenido_completo = f"[Documento Multimedia/Imagen Fuente: {nombre_original}]\nContenido extraído:\n{texto_imagen}"
+        contenido_completo = f"[Departamento: {departamento} | Imagen Fuente: {nombre_original}]\nContenido extraído:\n{texto_imagen}"
 
         embedding_response = generar_embeddings_con_reintento([contenido_completo])
         vector = embedding_response.embeddings[0].values
 
         data = {
             "content": contenido_completo,
-            "metadata": {"fuente": nombre_original, "tipo": "imagen"},
+            "metadata": {
+                "fuente": nombre_original,
+                "departamento": departamento,
+                "tipo": "imagen"
+            },
             "embedding": vector
         }
         supabase.table("documents").insert(data).execute()
@@ -168,17 +284,19 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
         chunks = dividir_texto_recursivo(texto_unidad, tamano_chunk=1000, solapamiento=200)
         for chunk in chunks:
             if nombre_hoja:
-                texto_formateado = f"[Documento Fuente: {nombre_original} | Hoja: {nombre_hoja}]\n{chunk}"
+                texto_formateado = f"[Departamento: {departamento} | Documento: {nombre_original} | Hoja: {nombre_hoja}]\n{chunk}"
                 meta = {
                     "fuente": nombre_original,
+                    "departamento": departamento,
                     "hoja": nombre_hoja,
                     "fragmento": indice_global,
                     "tipo": "excel"
                 }
             else:
-                texto_formateado = f"[Documento Fuente: {nombre_original}]\n{chunk}"
+                texto_formateado = f"[Departamento: {departamento} | Documento: {nombre_original}]\n{chunk}"
                 meta = {
                     "fuente": nombre_original,
+                    "departamento": departamento,
                     "fragmento": indice_global,
                     "tipo": "texto"
                 }
@@ -212,13 +330,16 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str) -> int:
     return len(registros_a_insertar)
 
 
+# =========================================================
+# CONSULTA RAG AISLADA POR DEPARTAMENTO
+# =========================================================
+
 def detectar_archivo_hoja_y_modo_global(
     pregunta: str,
     historial: list[dict],
     inventario: list[str],
     mapa_hojas: dict[str, list[str]]
 ) -> tuple[bool, str | None, str | None]:
-    """Detecta si la consulta pide leer un archivo completo o una hoja específica de un Excel."""
     texto_combinado = pregunta.lower()
     if historial:
         texto_combinado += " " + " ".join(m.get("texto", "").lower() for m in historial[-2:])
@@ -230,7 +351,6 @@ def detectar_archivo_hoja_y_modo_global(
             archivo_objetivo = nombre_archivo
             break
 
-    # Verificar si el usuario menciona el nombre de alguna hoja de Excel indexada
     hoja_objetivo = None
     for archivo, hojas in mapa_hojas.items():
         for h in hojas:
@@ -259,8 +379,11 @@ def detectar_archivo_hoja_y_modo_global(
     return es_consulta_global, archivo_objetivo, hoja_objetivo
 
 
-def recuperar_documento_completo(nombre_archivo: str, nombre_hoja: str | None = None) -> list[dict]:
-    """Recupera todos los fragmentos de un archivo (o de una hoja específica de Excel) ordenados."""
+def recuperar_documento_completo(
+    nombre_archivo: str,
+    nombre_hoja: str | None = None,
+    departamento_filtro: str | None = None
+) -> list[dict]:
     query = (
         supabase.table("documents")
         .select("content, metadata")
@@ -271,16 +394,33 @@ def recuperar_documento_completo(nombre_archivo: str, nombre_hoja: str | None = 
 
     res = query.limit(1000).execute()
     datos = res.data or []
+
+    # Validar permiso por departamento si no es admin global
+    if departamento_filtro:
+        datos = [
+            d for d in datos
+            if d.get("metadata", {}).get("departamento") in (departamento_filtro, "General")
+        ]
+
     datos.sort(key=lambda x: x.get("metadata", {}).get("fragmento", 0))
     for item in datos:
         item["similarity"] = 0.95
     return datos
 
 
-def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
-    """Ejecuta búsqueda híbrida o recuperación completa (por archivo o por hoja de Excel) y registra métricas."""
+def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: dict = None, filtro_admin_depto: str = None) -> dict:
+    """Ejecuta búsqueda híbrida o completa respetando el departamento del usuario autenticado."""
     inicio_tiempo = time.perf_counter()
     historial = historial or []
+    usuario_actual = usuario_actual or {"rol": "usuario", "departamento": "General"}
+
+    es_admin = usuario_actual.get("rol") == "admin"
+    if es_admin:
+        # El admin puede ver todo (None) o filtrar por un departamento específico desde el chat
+        depto_efectivo = filtro_admin_depto if (filtro_admin_depto and filtro_admin_depto != "Todos") else None
+    else:
+        # El usuario normal queda estrictamente restringido a su departamento (+ General)
+        depto_efectivo = usuario_actual.get("departamento")
 
     try:
         response_meta = supabase.table("documents").select("metadata").execute()
@@ -289,6 +429,10 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
 
         for doc in response_meta.data:
             meta = doc.get("metadata", {})
+            depto_doc = meta.get("departamento", "General")
+            if depto_efectivo and depto_doc not in (depto_efectivo, "General"):
+                continue
+
             fuente = meta.get("fuente")
             if fuente:
                 archivos_unicos.add(fuente)
@@ -307,7 +451,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
         modo_recuperacion = "hibrido"
 
         if es_global and archivo_objetivo:
-            fragmentos = recuperar_documento_completo(archivo_objetivo, hoja_objetivo)
+            fragmentos = recuperar_documento_completo(archivo_objetivo, hoja_objetivo, depto_efectivo)
             modo_recuperacion = "completo"
 
         if not fragmentos:
@@ -319,37 +463,28 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
             embedding_response = generar_embeddings_con_reintento([consulta_busqueda])
             vector_pregunta = embedding_response.embeddings[0].values
 
-            try:
-                respuesta_db = supabase.rpc(
-                    "match_documents_hybrid",
-                    {
-                        "query_text": pregunta,
-                        "query_embedding": vector_pregunta,
-                        "match_threshold": 0.30,
-                        "match_count": 20
-                    }
-                ).execute()
-            except Exception:
-                respuesta_db = supabase.rpc(
-                    "match_documents",
-                    {
-                        "query_embedding": vector_pregunta,
-                        "match_threshold": 0.30,
-                        "match_count": 20
-                    }
-                ).execute()
+            respuesta_db = supabase.rpc(
+                "match_documents_hybrid",
+                {
+                    "query_text": pregunta,
+                    "query_embedding": vector_pregunta,
+                    "filter_departamento": depto_efectivo,
+                    "match_threshold": 0.30,
+                    "match_count": 20
+                }
+            ).execute()
 
             fragmentos = respuesta_db.data or []
 
         if modo_recuperacion == "completo" and fragmentos:
             partes_limpias = []
             for item in fragmentos:
-                c = re.sub(r"^\[Documento Fuente: [^\]]+\]\n?", "", item["content"])
+                c = re.sub(r"^\[Departamento: [^\]]+\]\n?", "", item["content"])
                 partes_limpias.append(c)
             etiqueta_hoja = f" | Hoja: {hoja_objetivo}" if hoja_objetivo else ""
             contexto = f"=== CONTENIDO ÍNTEGRO: {archivo_objetivo}{etiqueta_hoja} ({len(fragmentos)} bloques procesados) ===\n" + "\n".join(partes_limpias)
         else:
-            contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante en los documentos indexados."
+            contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontró información relevante en los documentos disponibles para este departamento."
 
         fuentes_usadas = sorted(list({
             f"{item['metadata']['fuente']} (Hoja: {item['metadata']['hoja']})" if item.get("metadata", {}).get("hoja") else item["metadata"]["fuente"]
@@ -364,13 +499,14 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
             lineas_hist = [f"- {'Usuario' if m.get('rol') == 'user' else 'Asistente'}: {m.get('texto', '')}" for m in historial[-4:]]
             texto_historial = "[HISTORIAL RECIENTE DE LA CONVERSACIÓN]:\n" + "\n".join(lineas_hist) + "\n\n"
 
-        info_hojas_excel = f"\n[HOJAS POR ARCHIVO EXCEL INDEXADO]:\n{mapa_hojas}\n" if mapa_hojas else ""
+        info_hojas_excel = f"\n[HOJAS POR ARCHIVO EXCEL ACCESIBLE]:\n{mapa_hojas}\n" if mapa_hojas else ""
+        ambito_usuario = depto_efectivo if depto_efectivo else "Todos los departamentos (Acceso Administrador)"
 
         prompt_final = f"""
         Eres el Asistente Corporativo inteligente diseñado exclusivamente para la empresa **Victory Logistic**.
-        Analiza el contexto recuperado de los documentos (PDF, Word, Excel e imágenes transcritas) para asistir al equipo de Victory Logistic con precisión operativa y corporativa.
+        Estás asistiendo a: **{usuario_actual.get('nombre')}** (Rol: {usuario_actual.get('rol')}, Ámbito de acceso: **{ambito_usuario}**).
 
-        [INVENTARIO DE ARCHIVOS INDEXADOS]:
+        [INVENTARIO DE ARCHIVOS ACCESIBLES PARA ESTE DEPARTAMENTO]:
         {inventario_archivos}
         {info_hojas_excel}
         {texto_historial}[CONTEXTO RECUPERADO DE LA BASE DE DATOS]:
@@ -379,9 +515,9 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
         [PREGUNTA ACTUAL DEL USUARIO]:
         {pregunta}
 
-        Reglas estrictas de formato y respuesta:
-        1. **Identidad y Procesamiento Completo:** Responde siempre como el asistente oficial de **Victory Logistic**. Cuando recibas el contenido íntegro de un archivo o de una hoja de Excel en el contexto, procésalo en su totalidad para realizar conteos exactos, agrupaciones, totales o análisis completos; nunca digas que tienes un límite técnico ni que estás usando una muestra parcial si los datos están presentes en el contexto.
-        2. **Rigor Documental:** Basa tu respuesta ÚNICAMENTE en el contexto recuperado y el inventario. Si un dato específico no aparece en los documentos cargados, indícalo con claridad y cortesía sin inventar información.
+        Reglas estrictas de formato y seguridad:
+        1. **Confidencialidad Departamental:** Solo puedes responder con información proveniente de los documentos del departamento autorizado (**{ambito_usuario}**). Si el usuario pregunta por información de otro departamento al que no tiene acceso o que no está en los documentos disponibles, indica con cortesía que no tienes registros disponibles en su área.
+        2. **Procesamiento Completo:** Responde siempre como el asistente oficial de **Victory Logistic**. Cuando recibas el contenido íntegro de un archivo o de una hoja de Excel en el contexto, procésalo en su totalidad para realizar conteos exactos, agrupaciones, totales o análisis completos; nunca digas que tienes un límite técnico ni que estás usando una muestra parcial.
         3. **Uso Opcional de Tablas:** NO uses tablas para respuestas simples, definiciones o datos puntuales (como un solo RIF, una dirección o un nombre); en esos casos responde en párrafos claros y directos. Utiliza tablas Markdown **únicamente** cuando el usuario pida una tabla explícitamente o cuando sea necesario comparar o listar múltiples registros.
         4. **Gráficos Estadísticos (Chart.js):** Si el usuario solicita un gráfico (barras, líneas, torta/dona) o si los datos numéricos recuperados se visualizan mejor gráficamente, incluye un bloque de código con la etiqueta `chart` que contenga ÚNICAMENTE un JSON válido compatible con Chart.js:
            ```chart
@@ -393,8 +529,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
              }}
            }}
            ```
-           (Tipos válidos: "bar", "line", "pie", "doughnut". No agregues comentarios dentro del JSON).
-        5. **Diagramas de Flujo o Procesos (Mermaid.js):** Si el usuario solicita un diagrama, flujo de procesos, organigrama o mapa conceptual, incluye un bloque de código con la etiqueta `mermaid` usando sintaxis Mermaid válida (ej. `flowchart TD` o `sequenceDiagram`).
+        5. **Diagramas de Flujo o Procesos (Mermaid.js):** Si el usuario solicita un diagrama, flujo de procesos, organigrama o mapa conceptual, incluye un bloque de código con la etiqueta `mermaid` usando sintaxis Mermaid válida.
         """
 
         response = gemini_client.models.generate_content(
@@ -410,7 +545,8 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
                 "pregunta": pregunta,
                 "latencia_ms": latencia_ms,
                 "similitud_promedio": similitud_promedio,
-                "fuentes_usadas": fuentes_usadas
+                "fuentes_usadas": fuentes_usadas,
+                "departamento": ambito_usuario
             }).execute()
             if res_metric.data:
                 metric_id = res_metric.data[0]["id"]
@@ -429,7 +565,6 @@ def consultar_rag(pregunta: str, historial: list[dict] = None) -> dict:
 
 
 def eliminar_documento_por_fuente(nombre_archivo: str):
-    """Elimina todos los registros vectoriales asociados a un archivo."""
     try:
         supabase.table("documents").delete().eq("metadata->>fuente", nombre_archivo).execute()
     except Exception as e:
@@ -437,19 +572,24 @@ def eliminar_documento_por_fuente(nombre_archivo: str):
 
 
 def registrar_feedback_metrica(metric_id: int, feedback: int):
-    """Actualiza la calificación (1 = útil, -1 = no útil) de una consulta registrada."""
     supabase.table("rag_metrics").update({"feedback": feedback}).eq("id", metric_id).execute()
 
 
 def obtener_estadisticas_tesis() -> dict:
-    """Calcula KPIs de rendimiento y precisión para el panel de administrador."""
     res_docs = supabase.table("documents").select("metadata").execute()
     documentos = res_docs.data or []
-    archivos_unicos = sorted(list({
-        doc.get("metadata", {}).get("fuente")
-        for doc in documentos
-        if "fuente" in doc.get("metadata", {})
-    }))
+
+    mapa_archivos_depto: dict[str, str] = {}
+    for doc in documentos:
+        meta = doc.get("metadata", {})
+        fuente = meta.get("fuente")
+        if fuente:
+            mapa_archivos_depto[fuente] = meta.get("departamento", "General")
+
+    archivos_detalle = [
+        {"nombre": nombre, "departamento": depto}
+        for nombre, depto in sorted(mapa_archivos_depto.items())
+    ]
 
     res_metrics = supabase.table("rag_metrics").select("*").order("created_at", desc=True).limit(100).execute()
     metricas = res_metrics.data or []
@@ -464,8 +604,8 @@ def obtener_estadisticas_tesis() -> dict:
 
     return {
         "total_registros_vectoriales": len(documentos),
-        "total_archivos_subidos": len(archivos_unicos),
-        "archivos": archivos_unicos,
+        "total_archivos_subidos": len(archivos_detalle),
+        "archivos": archivos_detalle,
         "kpis": {
             "total_consultas": total_consultas,
             "latencia_promedio_ms": latencia_media,
