@@ -3,7 +3,6 @@ import re
 import time
 import hashlib
 import secrets
-from concurrent.futures import ThreadPoolExecutor
 import pypdf
 import docx
 import pandas as pd
@@ -29,30 +28,9 @@ DEPARTAMENTOS_VALIDOS = [
     "General"
 ]
 
-_CACHE_INVENTARIO = {
-    "timestamp": 0.0,
-    "datos": []
-}
-CACHE_TTL_SEGUNDOS = 120.0
-
-
-def invalidar_cache_inventario():
-    _CACHE_INVENTARIO["timestamp"] = 0.0
-
-
-def obtener_metadatos_cacheados() -> list[dict]:
-    ahora = time.time()
-    if ahora - _CACHE_INVENTARIO["timestamp"] < CACHE_TTL_SEGUNDOS and _CACHE_INVENTARIO["datos"]:
-        return _CACHE_INVENTARIO["datos"]
-
-    res = supabase.table("documents").select("metadata").execute()
-    _CACHE_INVENTARIO["datos"] = res.data or []
-    _CACHE_INVENTARIO["timestamp"] = ahora
-    return _CACHE_INVENTARIO["datos"]
-
 
 # =========================================================
-# GESTIÓN DE USUARIOS Y SEGURIDAD DE CONTRASEÑAS
+# GESTIÓN DE USUARIOS Y SEGURIDAD
 # =========================================================
 
 def hashear_password(password: str) -> str:
@@ -89,14 +67,8 @@ def registrar_usuario(nombre: str, username: str, password: str, departamento: s
         "departamento": departamento
     }).execute()
 
-    usuario = res.data[0]
-    return {
-        "id": usuario["id"],
-        "nombre": usuario["nombre"],
-        "username": usuario["username"],
-        "rol": usuario["rol"],
-        "departamento": usuario["departamento"]
-    }
+    u = res.data[0]
+    return {"id": u["id"], "nombre": u["nombre"], "username": u["username"], "rol": u["rol"], "departamento": u["departamento"]}
 
 
 def autenticar_usuario(username: str, password: str) -> dict:
@@ -104,29 +76,14 @@ def autenticar_usuario(username: str, password: str) -> dict:
     admin_secret = os.getenv("ADMIN_SECRET_KEY", "")
 
     if username_limpio == "admin" and admin_secret and secrets.compare_digest(password, admin_secret):
-        return {
-            "id": 0,
-            "nombre": "Administrador Victory Logistic",
-            "username": "admin",
-            "rol": "admin",
-            "departamento": "Todos"
-        }
+        return {"id": 0, "nombre": "Administrador Victory Logistic", "username": "admin", "rol": "admin", "departamento": "Todos"}
 
     res = supabase.table("usuarios").select("*").eq("username", username_limpio).execute()
-    if not res.data:
+    if not res.data or not verificar_password(password, res.data[0]["password_hash"]):
         raise ValueError("Usuario o contraseña incorrectos.")
 
-    user_db = res.data[0]
-    if not verificar_password(password, user_db["password_hash"]):
-        raise ValueError("Usuario o contraseña incorrectos.")
-
-    return {
-        "id": user_db["id"],
-        "nombre": user_db["nombre"],
-        "username": user_db["username"],
-        "rol": user_db["rol"],
-        "departamento": user_db["departamento"]
-    }
+    u = res.data[0]
+    return {"id": u["id"], "nombre": u["nombre"], "username": u["username"], "rol": u["rol"], "departamento": u["departamento"]}
 
 
 def listar_usuarios() -> list[dict]:
@@ -149,28 +106,40 @@ def eliminar_usuario_admin(user_id: int):
 
 
 # =========================================================
-# GENERACIÓN RÁPIDA CON FALLBACK INMEDIATO (SIN ESPERAS MUERTAS)
+# GENERACIÓN CON GEMINI 3.5 FLASH LITE (BAJA LATENCIA)
 # =========================================================
 
-def generar_respuesta_con_reintento(contents):
-    """Usa gemini-2.5-flash-lite como modelo principal de baja latencia con fallback inmediato."""
-    modelos = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash-lite"]
+def generar_respuesta_rapida(contents):
+    """Usa gemini-3.5-flash-lite sin thinking overhead y con fallback inmediato ante 503."""
+    modelos = ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite"]
     ultimo_error = None
 
-    for modelo_actual in modelos:
+    for modelo in modelos:
         try:
             return gemini_client.models.generate_content(
-                model=modelo_actual,
-                contents=contents
+                model=modelo,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0)
+                )
             )
         except Exception as e:
             ultimo_error = e
-            msg = str(e)
-            if any(code in msg for code in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "overloaded", "404"]):
+            if any(c in str(e) for c in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "overloaded"]):
                 continue
-            raise e
+            # Si el modelo no acepta thinking_config, reintentar sin esa config
+            try:
+                return gemini_client.models.generate_content(model=modelo, contents=contents)
+            except Exception as e2:
+                ultimo_error = e2
+                continue
     raise ultimo_error
 
+
+# =========================================================
+# INGESTA Y PROCESAMIENTO DOCUMENTAL
+# =========================================================
 
 def dividir_texto_recursivo(texto: str, tamano_chunk: int = 1000, solapamiento: int = 200) -> list[str]:
     separadores = ["\n\n", "\n", ". ", " "]
@@ -283,35 +252,27 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
     if extension in ["png", "jpg", "jpeg"]:
         archivo_subido = gemini_client.files.upload(file=ruta_archivo)
         try:
-            analisis_imagen = generar_respuesta_con_reintento([
+            analisis_imagen = generar_respuesta_rapida([
                 archivo_subido,
-                "Extrae y transcribe absolutamente todo el texto visible en esta imagen, incluyendo números de RIF, cédulas, nombres, fechas, montos, direcciones y datos operativos. Si hay tablas o sellos, descríbelos con exactitud."
+                "Extrae y transcribe todo el texto visible en esta imagen, incluyendo números, nombres, fechas, montos y tablas."
             ])
             texto_imagen = analisis_imagen.text
         except Exception as e:
-            texto_imagen = f"No se pudo extraer texto automático de la imagen ({str(e)})."
+            texto_imagen = f"No se pudo extraer texto de la imagen ({str(e)})."
         finally:
             try:
                 gemini_client.files.delete(name=archivo_subido.name)
             except Exception:
                 pass
 
-        contenido_completo = f"[Departamento: {departamento} | Imagen Fuente: {nombre_original}]\nContenido extraído:\n{texto_imagen}"
+        contenido_completo = f"[Departamento: {departamento} | Imagen: {nombre_original}]\n{texto_imagen}"
+        vector = generar_embeddings_con_reintento([contenido_completo]).embeddings[0].values
 
-        embedding_response = generar_embeddings_con_reintento([contenido_completo])
-        vector = embedding_response.embeddings[0].values
-
-        data = {
+        supabase.table("documents").insert({
             "content": contenido_completo,
-            "metadata": {
-                "fuente": nombre_original,
-                "departamento": departamento,
-                "tipo": "imagen"
-            },
+            "metadata": {"fuente": nombre_original, "departamento": departamento, "tipo": "imagen"},
             "embedding": vector
-        }
-        supabase.table("documents").insert(data).execute()
-        invalidar_cache_inventario()
+        }).execute()
         return 1
 
     unidades = extraer_unidades_de_archivo(ruta_archivo)
@@ -322,22 +283,11 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
         chunks = dividir_texto_recursivo(texto_unidad, tamano_chunk=1000, solapamiento=200)
         for chunk in chunks:
             if nombre_hoja:
-                texto_formateado = f"[Departamento: {departamento} | Documento: {nombre_original} | Hoja: {nombre_hoja}]\n{chunk}"
-                meta = {
-                    "fuente": nombre_original,
-                    "departamento": departamento,
-                    "hoja": nombre_hoja,
-                    "fragmento": indice_global,
-                    "tipo": "excel"
-                }
+                texto_formateado = f"[Departamento: {departamento} | Archivo: {nombre_original} | Hoja: {nombre_hoja}]\n{chunk}"
+                meta = {"fuente": nombre_original, "departamento": departamento, "hoja": nombre_hoja, "fragmento": indice_global, "tipo": "excel"}
             else:
-                texto_formateado = f"[Departamento: {departamento} | Documento: {nombre_original}]\n{chunk}"
-                meta = {
-                    "fuente": nombre_original,
-                    "departamento": departamento,
-                    "fragmento": indice_global,
-                    "tipo": "texto"
-                }
+                texto_formateado = f"[Departamento: {departamento} | Archivo: {nombre_original}]\n{chunk}"
+                meta = {"fuente": nombre_original, "departamento": departamento, "fragmento": indice_global, "tipo": "texto"}
             items_preparados.append((texto_formateado, meta))
             indice_global += 1
 
@@ -365,18 +315,16 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
     for i in range(0, len(registros_a_insertar), 100):
         supabase.table("documents").insert(registros_a_insertar[i:i + 100]).execute()
 
-    invalidar_cache_inventario()
     return len(registros_a_insertar)
 
 
 # =========================================================
-# CONSULTA RAG DE ALTA VELOCIDAD
+# CONSULTA RAG DIRECTA (OBJETIVO: 1 A 2 SEGUNDOS)
 # =========================================================
 
 def es_interaccion_casual(pregunta: str) -> str | None:
     limpia = re.sub(r"[¿?¡!.,;:]+", "", pregunta.strip().lower())
-    palabras = limpia.split()
-    if len(palabras) > 6:
+    if len(limpia.split()) > 6:
         return None
 
     saludos = {
@@ -384,122 +332,33 @@ def es_interaccion_casual(pregunta: str) -> str | None:
         "saludos", "hey", "que tal", "qué tal", "como estas", "cómo estás",
         "todo bien", "todo bien y tu", "todo bien y tú", "hola como estas", "hola qué tal"
     }
-    agradecimientos = {
-        "gracias", "muchas gracias", "excelente", "perfecto", "genial", "ok", "vale", "listo", "entendido"
-    }
-    despedidas = {
-        "adios", "adiós", "hasta luego", "nos vemos", "chao", "bye"
-    }
+    agradecimientos = {"gracias", "muchas gracias", "excelente", "perfecto", "genial", "ok", "vale", "listo"}
+    despedidas = {"adios", "adiós", "hasta luego", "nos vemos", "chao", "bye"}
 
     if limpia in saludos:
-        return "¡Todo excelente por aquí! Como asistente oficial de **Victory Logistic**, estoy listo para ayudarte con consultas operativas, reportes o información de tu departamento. ¿Qué necesitas revisar?"
+        return "¡Todo excelente por aquí! Como asistente de **Victory Logistic**, estoy listo para ayudarte con consultas de tu departamento. ¿Qué necesitas revisar?"
     if limpia in agradecimientos:
-        return "¡Con mucho gusto! Si necesitas consultar otro documento, generar un gráfico o revisar algún registro de **Victory Logistic**, aquí estoy."
+        return "¡Con mucho gusto! Aquí estoy si necesitas consultar otro dato de **Victory Logistic**."
     if limpia in despedidas:
         return "¡Hasta luego! Que tengas una excelente jornada en **Victory Logistic**."
     return None
 
 
-def detectar_archivo_hoja_y_modo_global(
-    pregunta: str,
-    inventario: list[str],
-    mapa_hojas: dict[str, list[str]]
-) -> tuple[bool, str | None, str | None]:
-    texto = pregunta.lower()
-
-    archivo_objetivo = None
-    for nombre_archivo in inventario:
-        base_sin_ext = os.path.splitext(nombre_archivo)[0].lower()
-        if nombre_archivo.lower() in texto or (len(base_sin_ext) >= 4 and base_sin_ext in texto):
-            archivo_objetivo = nombre_archivo
-            break
-
-    hoja_objetivo = None
-    for archivo, hojas in mapa_hojas.items():
-        for h in hojas:
-            if len(h) >= 3 and h.lower() in texto:
-                hoja_objetivo = h
-                if not archivo_objetivo:
-                    archivo_objetivo = archivo
-                break
-        if hoja_objetivo:
-            break
-
-    frases_globales = [
-        "archivo completo", "excel completo", "documento completo", "base completa",
-        "todos los registros", "todas las filas", "todos los datos", "analiza todo",
-        "resumen completo", "reporte consolidado", "sin muestra parcial", "hoja completa"
-    ]
-    es_consulta_global = any(frase in texto for frase in frases_globales) or (
-        hoja_objetivo is not None and any(w in texto for w in ["todo", "todos", "cuántos", "cuantos", "analiza", "gráfico", "grafico"])
-    )
-
-    if es_consulta_global and not archivo_objetivo:
-        archivos_excel = [f for f in inventario if f.lower().endswith(".xlsx")]
-        if len(archivos_excel) == 1:
-            archivo_objetivo = archivos_excel[0]
-
-    return es_consulta_global, archivo_objetivo, hoja_objetivo
-
-
-def recuperar_documento_completo(
-    nombre_archivo: str,
-    nombre_hoja: str | None = None,
-    departamento_filtro: str | None = None
-) -> list[dict]:
-    query = (
-        supabase.table("documents")
-        .select("content, metadata")
-        .eq("metadata->>fuente", nombre_archivo)
-    )
-    if nombre_hoja:
-        query = query.eq("metadata->>hoja", nombre_hoja)
-
-    res = query.limit(1000).execute()
-    datos = res.data or []
-
-    if departamento_filtro:
-        datos = [
-            d for d in datos
-            if d.get("metadata", {}).get("departamento") in (departamento_filtro, "General")
-        ]
-
-    datos.sort(key=lambda x: x.get("metadata", {}).get("fragmento", 0))
-    for item in datos:
-        item["similarity"] = 0.95
-    return datos
-
-
-def _crear_registro_metrica_inicial(pregunta: str, ambito: str) -> int | None:
+def registrar_metrica_en_segundo_plano(pregunta: str, latencia_ms: int, similitud_promedio: float, fuentes_usadas: list[str], ambito: str):
     try:
-        res = supabase.table("rag_metrics").insert({
+        supabase.table("rag_metrics").insert({
             "pregunta": pregunta,
-            "latencia_ms": 0,
-            "similitud_promedio": 0.0,
-            "fuentes_usadas": [],
-            "departamento": ambito
-        }).execute()
-        if res.data:
-            return res.data[0]["id"]
-    except Exception:
-        pass
-    return None
-
-
-def _actualizar_metrica_final(metric_id: int | None, latencia_ms: int, similitud_promedio: float, fuentes_usadas: list[str]):
-    if not metric_id:
-        return
-    try:
-        supabase.table("rag_metrics").update({
             "latencia_ms": latencia_ms,
             "similitud_promedio": similitud_promedio,
-            "fuentes_usadas": fuentes_usadas
-        }).eq("id", metric_id).execute()
+            "fuentes_usadas": fuentes_usadas,
+            "departamento": ambito
+        }).execute()
     except Exception:
         pass
 
 
 def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: dict = None, filtro_admin_depto: str = None) -> dict:
+    """Flujo directo de 3 pasos: 1) Embedding pregunta -> 2) RPC Supabase (top 5) -> 3) Gemini 3.5 Flash-Lite."""
     inicio_tiempo = time.perf_counter()
     historial = historial or []
     usuario_actual = usuario_actual or {"rol": "usuario", "departamento": "General"}
@@ -512,7 +371,7 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
             "fuentes": [],
             "latencia_ms": latencia_ms,
             "similitud_promedio": 1.0,
-            "metric_id": None
+            "ambito": "Casual"
         }
 
     es_admin = usuario_actual.get("rol") == "admin"
@@ -521,72 +380,31 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
     else:
         depto_efectivo = usuario_actual.get("departamento")
 
-    ambito_usuario = depto_efectivo if depto_efectivo else "Todos los departamentos (Admin)"
+    ambito_usuario = depto_efectivo if depto_efectivo else "Todos los departamentos"
 
     try:
-        metadata_rows = obtener_metadatos_cacheados()
-
-        archivos_unicos = set()
-        mapa_hojas_sets: dict[str, set] = {}
-
-        for doc in metadata_rows:
-            meta = doc.get("metadata", {})
-            depto_doc = meta.get("departamento", "General")
-            if depto_efectivo and depto_doc not in (depto_efectivo, "General"):
-                continue
-
-            fuente = meta.get("fuente")
-            if fuente:
-                archivos_unicos.add(fuente)
-                hoja = meta.get("hoja")
-                if hoja:
-                    mapa_hojas_sets.setdefault(fuente, set()).add(hoja)
-
-        inventario_archivos = sorted(list(archivos_unicos))
-        mapa_hojas = {k: sorted(list(v)) for k, v in mapa_hojas_sets.items()}
-
-        es_global, archivo_objetivo, hoja_objetivo = detectar_archivo_hoja_y_modo_global(
-            pregunta, inventario_archivos, mapa_hojas
+        # Paso 1: Vectorizar únicamente la pregunta actual (más rápido y preciso)
+        embedding_response = gemini_client.models.embed_content(
+            model="gemini-embedding-2",
+            contents=pregunta,
+            config=types.EmbedContentConfig(output_dimensionality=768)
         )
+        vector_pregunta = embedding_response.embeddings[0].values
 
-        fragmentos = []
-        modo_recuperacion = "hibrido"
+        # Paso 2: Búsqueda Híbrida directa en Supabase (Top 5 fragmentos)
+        respuesta_db = supabase.rpc(
+            "match_documents_hybrid",
+            {
+                "query_text": pregunta,
+                "query_embedding": vector_pregunta,
+                "filter_departamento": depto_efectivo,
+                "match_threshold": 0.30,
+                "match_count": 5
+            }
+        ).execute()
 
-        if es_global and archivo_objetivo:
-            fragmentos = recuperar_documento_completo(archivo_objetivo, hoja_objetivo, depto_efectivo)
-            modo_recuperacion = "completo"
-
-        if not fragmentos:
-            consulta_busqueda = pregunta
-            if historial:
-                ultimos_turnos = "\n".join([f"{m.get('rol', 'user')}: {m.get('texto', '')}" for m in historial[-2:]])
-                consulta_busqueda = f"{ultimos_turnos}\nPregunta actual: {pregunta}"
-
-            embedding_response = generar_embeddings_con_reintento([consulta_busqueda])
-            vector_pregunta = embedding_response.embeddings[0].values
-
-            respuesta_db = supabase.rpc(
-                "match_documents_hybrid",
-                {
-                    "query_text": pregunta,
-                    "query_embedding": vector_pregunta,
-                    "filter_departamento": depto_efectivo,
-                    "match_threshold": 0.30,
-                    "match_count": 6
-                }
-            ).execute()
-
-            fragmentos = respuesta_db.data or []
-
-        if modo_recuperacion == "completo" and fragmentos:
-            partes_limpias = []
-            for item in fragmentos:
-                c = re.sub(r"^\[Departamento: [^\]]+\]\n?", "", item["content"])
-                partes_limpias.append(c)
-            etiqueta_hoja = f" | Hoja: {hoja_objetivo}" if hoja_objetivo else ""
-            contexto = f"=== CONTENIDO ÍNTEGRO: {archivo_objetivo}{etiqueta_hoja} ({len(fragmentos)} bloques) ===\n" + "\n".join(partes_limpias)
-        else:
-            contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "Sin coincidencias en los documentos del departamento."
+        fragmentos = respuesta_db.data or []
+        contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "Sin coincidencias documentales."
 
         fuentes_usadas = sorted(list({
             f"{item['metadata']['fuente']} (Hoja: {item['metadata']['hoja']})" if item.get("metadata", {}).get("hoja") else item["metadata"]["fuente"]
@@ -598,48 +416,30 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
 
         texto_historial = ""
         if historial:
-            lineas_hist = [f"- {'Usuario' if m.get('rol') == 'user' else 'Asistente'}: {m.get('texto', '')}" for m in historial[-2:]]
-            texto_historial = "[HISTORIAL]:\n" + "\n".join(lineas_hist) + "\n\n"
+            lineas = [f"{'Usuario' if m.get('rol') == 'user' else 'Asistente'}: {m.get('texto', '')}" for m in historial[-2:]]
+            texto_historial = "Historial:\n" + "\n".join(lineas) + "\n\n"
 
-        info_hojas_excel = f" | Hojas Excel: {mapa_hojas}" if mapa_hojas else ""
+        # Paso 3: Prompt compacto para que gemini-3.5-flash-lite responda en < 1 segundo
+        prompt_final = f"""Eres el asistente de **Victory Logistic** para el área **{ambito_usuario}**.
+{texto_historial}Contexto documental:
+{contexto}
 
-        prompt_final = f"""
-        Eres el Asistente Corporativo oficial de **Victory Logistic**.
-        Usuario: **{usuario_actual.get('nombre')}** (Ámbito autorizado: **{ambito_usuario}**).
-        Archivos accesibles: {inventario_archivos}{info_hojas_excel}
-        {texto_historial}[CONTEXTO]:
-        {contexto}
+Pregunta: {pregunta}
 
-        [PREGUNTA]: {pregunta}
+Reglas:
+- Responde directo y conciso usando solo el contexto de **{ambito_usuario}**. Si no está en el contexto, dilo con cortesía.
+- No uses tablas para respuestas simples o datos puntuales; úsalas solo para listar o comparar múltiples registros.
+- Si piden gráfico, incluye bloque `chart` con JSON válido de Chart.js; si piden diagrama, bloque `mermaid`."""
 
-        Reglas:
-        1. Responde solo con datos de **{ambito_usuario}**. Si no está en el contexto, dilo con cortesía.
-        2. Si piden analizar todo un archivo grande, indica escribir *"analiza el archivo completo [nombre]"*.
-        3. No uses tablas para respuestas simples o datos puntuales; úsalas solo para comparar o listar múltiples registros.
-        4. Si piden gráfico, usa bloque `chart` con JSON válido de Chart.js; si piden diagrama, bloque `mermaid`.
-        """
-
-        # Ejecutar generación del LLM y creación del metric_id en paralelo para no sumar latencia
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futuro_llm = executor.submit(generar_respuesta_con_reintento, prompt_final)
-            futuro_metric = executor.submit(_crear_registro_metrica_inicial, pregunta, ambito_usuario)
-
-            response = futuro_llm.result()
-            metric_id = futuro_metric.result()
-
+        response = generar_respuesta_rapida(prompt_final)
         latencia_ms = int((time.perf_counter() - inicio_tiempo) * 1000)
-
-        # Actualizar latencia real y fuentes en segundo plano
-        executor_bg = ThreadPoolExecutor(max_workers=1)
-        executor_bg.submit(_actualizar_metrica_final, metric_id, latencia_ms, similitud_promedio, fuentes_usadas)
-        executor_bg.shutdown(wait=False)
 
         return {
             "respuesta": response.text,
             "fuentes": fuentes_usadas,
             "latencia_ms": latencia_ms,
             "similitud_promedio": similitud_promedio,
-            "metric_id": metric_id
+            "ambito": ambito_usuario
         }
     except Exception as e:
         raise Exception(f"Error en el servicio RAG: {str(e)}")
@@ -648,7 +448,6 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
 def eliminar_documento_por_fuente(nombre_archivo: str):
     try:
         supabase.table("documents").delete().eq("metadata->>fuente", nombre_archivo).execute()
-        invalidar_cache_inventario()
     except Exception as e:
         raise Exception(f"Error al eliminar el documento en Supabase: {str(e)}")
 
@@ -658,7 +457,8 @@ def registrar_feedback_metrica(metric_id: int, feedback: int):
 
 
 def obtener_estadisticas_tesis() -> dict:
-    documentos = obtener_metadatos_cacheados()
+    res_docs = supabase.table("documents").select("metadata").execute()
+    documentos = res_docs.data or []
 
     mapa_archivos_depto: dict[str, str] = {}
     for doc in documentos:
