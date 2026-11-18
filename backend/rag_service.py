@@ -311,7 +311,7 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
 
 
 # =========================================================
-# CONSULTA RAG PRECISA Y RÁPIDA
+# INVENTARIO SQL RÁPIDO Y CONSULTA RAG
 # =========================================================
 
 def es_interaccion_casual(pregunta: str) -> str | None:
@@ -334,6 +334,93 @@ def es_interaccion_casual(pregunta: str) -> str | None:
     if limpia in despedidas:
         return "¡Hasta luego! Que tengas una excelente jornada en **Victory Logistic**."
     return None
+
+
+def _obtener_inventario_sql(depto_efectivo: str | None) -> tuple[list[dict], dict[str, list[str]]]:
+    """Ejecuta SELECT DISTINCT en PostgreSQL (~15ms) para obtener los archivos exactos y sus hojas."""
+    res = supabase.rpc("get_documents_inventory", {"filter_departamento": depto_efectivo}).execute()
+    filas = res.data or []
+
+    archivos_map: dict[str, str] = {}
+    hojas_map: dict[str, list[str]] = {}
+
+    for row in filas:
+        fuente = row.get("fuente")
+        depto = row.get("departamento", "General")
+        hoja = row.get("hoja")
+        if fuente:
+            archivos_map[fuente] = depto
+            if hoja:
+                hojas_map.setdefault(fuente, [])
+                if hoja not in hojas_map[fuente]:
+                    hojas_map[fuente].append(hoja)
+
+    lista_archivos = [{"archivo": k, "departamento": v} for k, v in sorted(archivos_map.items())]
+    return lista_archivos, hojas_map
+
+
+def _vectorizar_texto(texto: str) -> list[float]:
+    res = gemini_client.models.embed_content(
+        model="gemini-embedding-2",
+        contents=texto,
+        config=types.EmbedContentConfig(output_dimensionality=768)
+    )
+    return res.embeddings[0].values
+
+
+def detectar_solicitud_completa(pregunta: str, lista_archivos: list[dict], hojas_map: dict[str, list[str]]) -> tuple[bool, str | None, str | None]:
+    texto = pregunta.lower()
+    archivo_objetivo = None
+
+    for item in lista_archivos:
+        nombre = item["archivo"]
+        base = os.path.splitext(nombre)[0].lower()
+        if nombre.lower() in texto or (len(base) >= 4 and base in texto):
+            archivo_objetivo = nombre
+            break
+
+    hoja_objetivo = None
+    for archivo, hojas in hojas_map.items():
+        for h in hojas:
+            if len(h) >= 3 and h.lower() in texto:
+                hoja_objetivo = h
+                if not archivo_objetivo:
+                    archivo_objetivo = archivo
+                break
+        if hoja_objetivo:
+            break
+
+    frases_globales = [
+        "archivo completo", "excel completo", "documento completo", "base completa",
+        "todos los registros", "todas las filas", "todos los datos", "analiza todo",
+        "resumen completo", "reporte consolidado", "hoja completa"
+    ]
+    es_global = any(f in texto for f in frases_globales) or (
+        hoja_objetivo is not None and any(w in texto for w in ["todo", "todos", "cuántos", "cuantos", "analiza", "gráfico", "grafico"])
+    )
+
+    if es_global and not archivo_objetivo:
+        excels = [i["archivo"] for i in lista_archivos if i["archivo"].lower().endswith(".xlsx")]
+        if len(excels) == 1:
+            archivo_objetivo = excels[0]
+
+    return es_global, archivo_objetivo, hoja_objetivo
+
+
+def recuperar_documento_completo(nombre_archivo: str, nombre_hoja: str | None = None, depto_filtro: str | None = None) -> list[dict]:
+    query = supabase.table("documents").select("content, metadata").eq("metadata->>fuente", nombre_archivo)
+    if nombre_hoja:
+        query = query.eq("metadata->>hoja", nombre_hoja)
+
+    res = query.limit(1000).execute()
+    datos = res.data or []
+    if depto_filtro:
+        datos = [d for d in datos if d.get("metadata", {}).get("departamento") in (depto_filtro, "General")]
+
+    datos.sort(key=lambda x: x.get("metadata", {}).get("fragmento", 0))
+    for item in datos:
+        item["similarity"] = 0.95
+    return datos
 
 
 def registrar_metrica_en_segundo_plano(pregunta: str, latencia_ms: int, similitud_promedio: float, fuentes_usadas: list[str], ambito: str):
@@ -404,33 +491,46 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
     ambito_usuario = depto_efectivo if depto_efectivo else "Todos los departamentos"
 
     try:
-        # Incluir último turno en la búsqueda para resolver preguntas de seguimiento con precisión
         consulta_busqueda = pregunta
         if historial:
             ultimos = "\n".join([f"{m.get('rol', 'user')}: {m.get('texto', '')}" for m in historial[-2:]])
             consulta_busqueda = f"{ultimos}\nConsulta actual: {pregunta}"
 
-        embedding_response = gemini_client.models.embed_content(
-            model="gemini-embedding-2",
-            contents=consulta_busqueda,
-            config=types.EmbedContentConfig(output_dimensionality=768)
-        )
-        vector_pregunta = embedding_response.embeddings[0].values
+        # Ejecutar EN PARALELO: Inventario exacto SQL (~15ms) + Embedding de la consulta
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futuro_inv = executor.submit(_obtener_inventario_sql, depto_efectivo)
+            futuro_emb = executor.submit(_vectorizar_texto, consulta_busqueda)
 
-        # Recuperar los 12 fragmentos más relevantes usando índice HNSW + Full-Text Search
-        respuesta_db = supabase.rpc(
-            "match_documents_hybrid",
-            {
-                "query_text": pregunta,
-                "query_embedding": vector_pregunta,
-                "filter_departamento": depto_efectivo,
-                "match_threshold": 0.25,
-                "match_count": 12
-            }
-        ).execute()
+            lista_archivos, hojas_map = futuro_inv.result()
+            vector_pregunta = futuro_emb.result()
 
-        fragmentos = respuesta_db.data or []
-        contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontraron registros relevantes en los documentos de este departamento."
+        es_global, archivo_objetivo, hoja_objetivo = detectar_solicitud_completa(pregunta, lista_archivos, hojas_map)
+        fragmentos = []
+        modo_completo = False
+
+        if es_global and archivo_objetivo:
+            fragmentos = recuperar_documento_completo(archivo_objetivo, hoja_objetivo, depto_efectivo)
+            modo_completo = True
+
+        if not fragmentos:
+            respuesta_db = supabase.rpc(
+                "match_documents_hybrid",
+                {
+                    "query_text": pregunta,
+                    "query_embedding": vector_pregunta,
+                    "filter_departamento": depto_efectivo,
+                    "match_threshold": 0.25,
+                    "match_count": 12
+                }
+            ).execute()
+            fragmentos = respuesta_db.data or []
+
+        if modo_completo and fragmentos:
+            partes = [re.sub(r"^\[Departamento: [^\]]+\]\n?", "", item["content"]) for item in fragmentos]
+            etiqueta = f" | Hoja: {hoja_objetivo}" if hoja_objetivo else ""
+            contexto = f"=== CONTENIDO ÍNTEGRO: {archivo_objetivo}{etiqueta} ({len(fragmentos)} bloques) ===\n" + "\n".join(partes)
+        else:
+            contexto = "\n\n".join([item["content"] for item in fragmentos]) if fragmentos else "No se encontraron coincidencias documentales."
 
         fuentes_usadas = sorted(list({
             f"{item['metadata']['fuente']} (Hoja: {item['metadata']['hoja']})" if item.get("metadata", {}).get("hoja") else item["metadata"]["fuente"]
@@ -443,23 +543,28 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
         texto_historial = ""
         if historial:
             lineas = [f"- {'Usuario' if m.get('rol') == 'user' else 'Asistente'}: {m.get('texto', '')}" for m in historial[-4:]]
-            texto_historial = "[HISTORIAL DE CONVERSACIÓN]:\n" + "\n".join(lineas) + "\n\n"
+            texto_historial = "[HISTORIAL RECIENTE]:\n" + "\n".join(lineas) + "\n\n"
+
+        info_hojas = f"\n[HOJAS POR ARCHIVO EXCEL]: {hojas_map}" if hojas_map else ""
 
         prompt_final = f"""Eres el Asistente Corporativo oficial de **Victory Logistic**.
 Atiendes a **{usuario_actual.get('nombre')}** (Ámbito autorizado: **{ambito_usuario}**).
 
-{texto_historial}[CONTEXTO DOCUMENTAL RECUPERADO]:
+[INVENTARIO EXACTO DE DOCUMENTOS DISPONIBLES ({len(lista_archivos)} archivos en total)]:
+{lista_archivos}{info_hojas}
+
+{texto_historial}[FRAGMENTOS DOCUMENTALES RECUPERADOS]:
 {contexto}
 
 [PREGUNTA DEL USUARIO]:
 {pregunta}
 
 Reglas estrictas:
-1. Basa tu respuesta ÚNICAMENTE en el contexto documental recuperado para **{ambito_usuario}**. Analiza cuidadosamente todos los fragmentos proporcionados antes de responder; si el dato realmente no aparece en ningún fragmento, indícalo con cortesía sin inventar.
-2. No uses tablas para datos simples o puntuales (un solo nombre, RIF, fecha o cifra). Usa tablas Markdown **únicamente** cuando sea necesario listar o comparar múltiples registros o cuando el usuario pida una tabla.
-3. Si el usuario pide un gráfico, incluye un bloque `chart` con JSON válido de Chart.js; si pide un diagrama o flujo, incluye un bloque `mermaid` con sintaxis Mermaid válida."""
+1. Usa el [INVENTARIO EXACTO DE DOCUMENTOS DISPONIBLES] para responder con total precisión cuántos y cuáles documentos existen en el área **{ambito_usuario}**.
+2. Basa las respuestas sobre datos internos ÚNICAMENTE en los documentos autorizados de **{ambito_usuario}**. Si piden analizar un archivo completo, indica que pueden pedirlo escribiendo *"analiza el archivo completo [nombre]"*.
+3. No uses tablas para datos simples o puntuales (un solo nombre, RIF, fecha o cifra). Usa tablas Markdown **únicamente** cuando sea necesario listar o comparar múltiples registros o cuando el usuario pida una tabla.
+4. Si el usuario pide un gráfico, incluye un bloque `chart` con JSON válido de Chart.js; si pide un diagrama o flujo, incluye un bloque `mermaid` con sintaxis Mermaid válida."""
 
-        # Ejecutar Gemini 3.5 Flash-Lite y creación de metric_id en paralelo
         with ThreadPoolExecutor(max_workers=2) as executor:
             futuro_llm = executor.submit(generar_respuesta_rapida, prompt_final)
             futuro_metric = executor.submit(_crear_metric_id, pregunta, ambito_usuario)
