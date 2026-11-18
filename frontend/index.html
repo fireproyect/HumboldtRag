@@ -22,7 +22,6 @@
             <span class="user-pill" id="header-user-info" style="display: none;"></span>
         </div>
         <div class="header-actions">
-            <!-- Selector exclusivo para Administradores para filtrar departamento en el chat -->
             <select id="admin-dept-filter" class="header-select" style="display: none;" title="Filtrar consultas por departamento">
                 <option value="Todos">Todos los Departamentos</option>
                 <option value="Dispatch">Dispatch</option>
@@ -47,32 +46,32 @@
     <div id="auth-screen" class="auth-wrapper">
         <div class="auth-card">
             <div class="auth-tabs">
-                <button class="auth-tab active" id="tab-login" onclick="mostrarTabAuth('login')">Iniciar Sesión</button>
-                <button class="auth-tab" id="tab-register" onclick="mostrarTabAuth('register')">Registrarse</button>
+                <button type="button" class="auth-tab active" id="tab-login" onclick="mostrarTabAuth('login')">Iniciar Sesión</button>
+                <button type="button" class="auth-tab" id="tab-register" onclick="mostrarTabAuth('register')">Registrarse</button>
             </div>
 
             <!-- Formulario Login -->
-            <div id="form-login">
+            <form id="form-login" onsubmit="event.preventDefault(); iniciarSesionUsuario();" autocomplete="on">
                 <div class="form-group">
                     <label>Usuario o Correo Corporativo</label>
-                    <input type="text" id="login-username" class="form-control" placeholder="ej: jperez o admin" onkeypress="if(event.key==='Enter') iniciarSesionUsuario()">
+                    <input type="text" id="login-username" name="username" autocomplete="username" class="form-control" placeholder="ej: jperez o admin">
                 </div>
                 <div class="form-group">
                     <label>Contraseña</label>
-                    <input type="password" id="login-password" class="form-control" placeholder="••••••••" onkeypress="if(event.key==='Enter') iniciarSesionUsuario()">
+                    <input type="password" id="login-password" name="password" autocomplete="current-password" class="form-control" placeholder="••••••••">
                 </div>
-                <button id="btn-login-submit" onclick="iniciarSesionUsuario()" style="width: 100%; margin-top: 6px;">Entrar al Sistema</button>
-            </div>
+                <button type="submit" id="btn-login-submit" style="width: 100%; margin-top: 6px;">Entrar al Sistema</button>
+            </form>
 
             <!-- Formulario Registro -->
-            <div id="form-register" style="display: none;">
+            <form id="form-register" onsubmit="event.preventDefault(); registrarNuevoUsuario();" style="display: none;" autocomplete="off">
                 <div class="form-group">
                     <label>Nombre y Apellido</label>
-                    <input type="text" id="reg-nombre" class="form-control" placeholder="ej: Juan Pérez">
+                    <input type="text" id="reg-nombre" autocomplete="off" class="form-control" placeholder="ej: Juan Pérez">
                 </div>
                 <div class="form-group">
                     <label>Usuario o Correo Corporativo</label>
-                    <input type="text" id="reg-username" class="form-control" placeholder="ej: jperez@victorylogistic.com">
+                    <input type="text" id="reg-username" autocomplete="off" class="form-control" placeholder="ej: jperez@victorylogistic.com">
                 </div>
                 <div class="form-group">
                     <label>Departamento</label>
@@ -90,22 +89,22 @@
                 </div>
                 <div class="form-group">
                     <label>Contraseña</label>
-                    <input type="password" id="reg-password" class="form-control" placeholder="Mínimo 4 caracteres" onkeypress="if(event.key==='Enter') registrarNuevoUsuario()">
+                    <input type="password" id="reg-password" autocomplete="new-password" class="form-control" placeholder="Mínimo 4 caracteres">
                 </div>
-                <button id="btn-reg-submit" onclick="registrarNuevoUsuario()" style="width: 100%; margin-top: 6px;">Crear Cuenta</button>
-            </div>
+                <button type="submit" id="btn-reg-submit" style="width: 100%; margin-top: 6px;">Crear Cuenta</button>
+            </form>
 
             <p id="auth-message" style="color: #ef4444; font-size: 0.85rem; margin-top: 12px; text-align: center;"></p>
         </div>
     </div>
 
-    <!-- CONTENEDOR DEL CHAT (Visible tras iniciar sesión) -->
+    <!-- CONTENEDOR DEL CHAT -->
     <div id="chat-container" style="display: none;">
         <div id="chat-messages"></div>
         
         <div id="chat-input-area">
-            <input type="text" id="user-input" placeholder="Escribe tu consulta para Victory Logistic..." autocomplete="off">
-            <button id="send-btn" onclick="enviarMensaje()">Enviar</button>
+            <input type="search" id="user-input" name="chat_query_field" placeholder="Escribe tu consulta para Victory Logistic..." autocomplete="off" autocorrect="off" spellcheck="false" data-lpignore="true">
+            <button type="button" id="send-btn" onclick="enviarMensaje()">Enviar</button>
         </div>
     </div>
 
