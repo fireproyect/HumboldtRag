@@ -3,7 +3,6 @@ import re
 import time
 import hashlib
 import secrets
-import threading
 import pypdf
 import docx
 import pandas as pd
@@ -29,7 +28,6 @@ DEPARTAMENTOS_VALIDOS = [
     "General"
 ]
 
-# Caché en memoria para evitar descargar todos los metadatos en cada pregunta
 _CACHE_INVENTARIO = {
     "timestamp": 0.0,
     "datos": []
@@ -150,8 +148,31 @@ def eliminar_usuario_admin(user_id: int):
 
 
 # =========================================================
-# PROCESAMIENTO DOCUMENTAL Y VECTORIZACIÓN POR DEPARTAMENTO
+# PROCESAMIENTO DOCUMENTAL Y REINTENTOS ANTE ERRORES 503/429
 # =========================================================
+
+def generar_respuesta_con_reintento(contents, max_reintentos: int = 3):
+    """Llama a Gemini con reintentos automáticos y fallback si el modelo reporta 503 UNAVAILABLE."""
+    modelos = ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite"]
+    ultimo_error = None
+
+    for intento in range(max_reintentos):
+        modelo_actual = modelos[min(intento, len(modelos) - 1)]
+        try:
+            return gemini_client.models.generate_content(
+                model=modelo_actual,
+                contents=contents
+            )
+        except Exception as e:
+            ultimo_error = e
+            msg = str(e)
+            if any(code in msg for code in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "overloaded"]):
+                if intento < max_reintentos - 1:
+                    time.sleep(1.5 * (intento + 1))
+                    continue
+            raise e
+    raise ultimo_error
+
 
 def dividir_texto_recursivo(texto: str, tamano_chunk: int = 1000, solapamiento: int = 200) -> list[str]:
     separadores = ["\n\n", "\n", ". ", " "]
@@ -245,9 +266,9 @@ def generar_embeddings_con_reintento(textos: list[str], max_reintentos: int = 4)
             )
         except Exception as e:
             mensaje_error = str(e)
-            if "429" in mensaje_error or "RESOURCE_EXHAUSTED" in mensaje_error:
+            if any(code in mensaje_error for code in ["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"]):
                 match_segundos = re.search(r"retry in (\d+(?:\.\d+)?)s", mensaje_error, re.IGNORECASE)
-                espera = float(match_segundos.group(1)) + 2.0 if match_segundos else 32.0
+                espera = float(match_segundos.group(1)) + 2.0 if match_segundos else 15.0
                 if intento < max_reintentos - 1:
                     time.sleep(espera)
                     continue
@@ -264,13 +285,10 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
     if extension in ["png", "jpg", "jpeg"]:
         archivo_subido = gemini_client.files.upload(file=ruta_archivo)
         try:
-            analisis_imagen = gemini_client.models.generate_content(
-                model="gemini-3.5-flash-lite",
-                contents=[
-                    archivo_subido,
-                    "Extrae y transcribe absolutamente todo el texto visible en esta imagen, incluyendo números de RIF, cédulas, nombres, fechas, montos, direcciones y datos operativos. Si hay tablas o sellos, descríbelos con exactitud."
-                ]
-            )
+            analisis_imagen = generar_respuesta_con_reintento([
+                archivo_subido,
+                "Extrae y transcribe absolutamente todo el texto visible en esta imagen, incluyendo números de RIF, cédulas, nombres, fechas, montos, direcciones y datos operativos. Si hay tablas o sellos, descríbelos con exactitud."
+            ])
             texto_imagen = analisis_imagen.text
         except Exception as e:
             texto_imagen = f"No se pudo extraer texto automático de la imagen ({str(e)})."
@@ -358,7 +376,6 @@ def procesar_y_guardar_archivo(ruta_archivo: str, nombre_original: str, departam
 # =========================================================
 
 def es_interaccion_casual(pregunta: str) -> str | None:
-    """Detecta saludos, cortesías o despedidas cortas para responder en <0.1s sin latencia vectorial."""
     limpia = re.sub(r"[¿?¡!.,;:]+", "", pregunta.strip().lower())
     palabras = limpia.split()
     if len(palabras) > 6:
@@ -455,25 +472,11 @@ def recuperar_documento_completo(
     return datos
 
 
-def _guardar_metrica_async(pregunta: str, latencia_ms: int, similitud_promedio: float, fuentes_usadas: list[str], ambito: str):
-    try:
-        supabase.table("rag_metrics").insert({
-            "pregunta": pregunta,
-            "latencia_ms": latencia_ms,
-            "similitud_promedio": similitud_promedio,
-            "fuentes_usadas": fuentes_usadas,
-            "departamento": ambito
-        }).execute()
-    except Exception:
-        pass
-
-
 def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: dict = None, filtro_admin_depto: str = None) -> dict:
     inicio_tiempo = time.perf_counter()
     historial = historial or []
     usuario_actual = usuario_actual or {"rol": "usuario", "departamento": "General"}
 
-    # 1. Fast-Path: Si es un saludo o cortesía simple, responder instantáneamente (<0.05s)
     respuesta_casual = es_interaccion_casual(pregunta)
     if respuesta_casual:
         latencia_ms = max(1, int((time.perf_counter() - inicio_tiempo) * 1000))
@@ -492,7 +495,6 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
         depto_efectivo = usuario_actual.get("departamento")
 
     try:
-        # 2. Leer inventario desde caché en memoria (evita 1.2s de consulta repetitiva a Supabase)
         metadata_rows = obtener_metadatos_cacheados()
 
         archivos_unicos = set()
@@ -595,26 +597,30 @@ def consultar_rag(pregunta: str, historial: list[dict] = None, usuario_actual: d
         5. **Diagramas (Mermaid.js):** Si se pide un diagrama o flujo, incluye un bloque `mermaid` con sintaxis válida.
         """
 
-        response = gemini_client.models.generate_content(
-            model="gemini-3.5-flash-lite",
-            contents=prompt_final
-        )
+        response = generar_respuesta_con_reintento(prompt_final)
 
         latencia_ms = int((time.perf_counter() - inicio_tiempo) * 1000)
 
-        # Guardar métrica en segundo plano sin retrasar la entrega al usuario
-        threading.Thread(
-            target=_guardar_metrica_async,
-            args=(pregunta, latencia_ms, similitud_promedio, fuentes_usadas, ambito_usuario),
-            daemon=True
-        ).start()
+        metric_id = None
+        try:
+            res_metric = supabase.table("rag_metrics").insert({
+                "pregunta": pregunta,
+                "latencia_ms": latencia_ms,
+                "similitud_promedio": similitud_promedio,
+                "fuentes_usadas": fuentes_usadas,
+                "departamento": ambito_usuario
+            }).execute()
+            if res_metric.data:
+                metric_id = res_metric.data[0]["id"]
+        except Exception:
+            pass
 
         return {
             "respuesta": response.text,
             "fuentes": fuentes_usadas,
             "latencia_ms": latencia_ms,
             "similitud_promedio": similitud_promedio,
-            "metric_id": None
+            "metric_id": metric_id
         }
     except Exception as e:
         raise Exception(f"Error en el servicio RAG: {str(e)}")
