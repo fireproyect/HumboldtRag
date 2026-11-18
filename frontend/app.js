@@ -1,7 +1,7 @@
 const API_URL = "https://humboldtrag.onrender.com";
 let historialConversacion = [];
+let usuarioActual = null;
 
-// Inicializar tema (Claro / Oscuro) y Mermaid
 (function inicializarTema() {
     const temaGuardado = localStorage.getItem("vl_theme") || "light";
     document.documentElement.setAttribute("data-theme", temaGuardado);
@@ -17,6 +17,7 @@ let historialConversacion = [];
 document.addEventListener("DOMContentLoaded", () => {
     actualizarIconoTema();
     verificarEstadoServidor();
+    verificarSesionGuardada();
 });
 
 function alternarTema() {
@@ -59,6 +60,145 @@ async function verificarEstadoServidor() {
     }
 }
 
+// =========================================================
+// AUTENTICACIÓN (LOGIN / REGISTRO)
+// =========================================================
+
+function mostrarTabAuth(tab) {
+    document.getElementById("auth-message").textContent = "";
+    if (tab === "login") {
+        document.getElementById("tab-login").classList.add("active");
+        document.getElementById("tab-register").classList.remove("active");
+        document.getElementById("form-login").style.display = "block";
+        document.getElementById("form-register").style.display = "none";
+    } else {
+        document.getElementById("tab-register").classList.add("active");
+        document.getElementById("tab-login").classList.remove("active");
+        document.getElementById("form-register").style.display = "block";
+        document.getElementById("form-login").style.display = "none";
+    }
+}
+
+async function verificarSesionGuardada() {
+    const token = localStorage.getItem("vl_token");
+    if (!token) return;
+
+    try {
+        const res = await fetch(`${API_URL}/auth/me`, {
+            headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        activarInterfazChat(data.usuario, token);
+    } catch {
+        localStorage.removeItem("vl_token");
+        localStorage.removeItem("vl_user");
+    }
+}
+
+async function iniciarSesionUsuario() {
+    const username = document.getElementById("login-username").value.trim();
+    const password = document.getElementById("login-password").value;
+    const msgEl = document.getElementById("auth-message");
+    const btn = document.getElementById("btn-login-submit");
+
+    if (!username || !password) {
+        msgEl.textContent = "Completa usuario y contraseña.";
+        return;
+    }
+
+    btn.disabled = true;
+    msgEl.style.color = "var(--brand-accent)";
+    msgEl.textContent = "Verificando credenciales...";
+
+    try {
+        const res = await fetch(`${API_URL}/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Error al iniciar sesión");
+
+        activarInterfazChat(data.usuario, data.token);
+    } catch (err) {
+        msgEl.style.color = "#ef4444";
+        msgEl.textContent = err.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function registrarNuevoUsuario() {
+    const nombre = document.getElementById("reg-nombre").value.trim();
+    const username = document.getElementById("reg-username").value.trim();
+    const departamento = document.getElementById("reg-departamento").value;
+    const password = document.getElementById("reg-password").value;
+    const msgEl = document.getElementById("auth-message");
+    const btn = document.getElementById("btn-reg-submit");
+
+    if (!nombre || !username || !departamento || !password) {
+        msgEl.style.color = "#ef4444";
+        msgEl.textContent = "Por favor completa todos los campos y selecciona tu departamento.";
+        return;
+    }
+
+    btn.disabled = true;
+    msgEl.style.color = "var(--brand-accent)";
+    msgEl.textContent = "Creando cuenta corporativa...";
+
+    try {
+        const res = await fetch(`${API_URL}/auth/registro`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ nombre, username, password, departamento })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "No se pudo completar el registro");
+
+        activarInterfazChat(data.usuario, data.token);
+    } catch (err) {
+        msgEl.style.color = "#ef4444";
+        msgEl.textContent = err.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function activarInterfazChat(usuario, token) {
+    usuarioActual = usuario;
+    localStorage.setItem("vl_token", token);
+    localStorage.setItem("vl_user", JSON.stringify(usuario));
+
+    document.getElementById("auth-screen").style.display = "none";
+    document.getElementById("chat-container").style.display = "flex";
+    document.getElementById("btn-nueva-consulta").style.display = "inline-block";
+    document.getElementById("btn-logout").style.display = "inline-block";
+
+    const userPill = document.getElementById("header-user-info");
+    userPill.style.display = "inline-flex";
+    userPill.textContent = usuario.rol === "admin"
+        ? `👑 ${usuario.nombre} (Admin)`
+        : `👤 ${usuario.nombre} · ${usuario.departamento}`;
+
+    if (usuario.rol === "admin") {
+        document.getElementById("link-admin").style.display = "inline-block";
+        document.getElementById("admin-dept-filter").style.display = "inline-block";
+    }
+
+    limpiarChat();
+}
+
+function cerrarSesion() {
+    localStorage.removeItem("vl_token");
+    localStorage.removeItem("vl_user");
+    location.reload();
+}
+
+// =========================================================
+// LÓGICA DEL CHAT
+// =========================================================
+
 document.getElementById("user-input").addEventListener("keypress", function (event) {
     if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -69,9 +209,13 @@ document.getElementById("user-input").addEventListener("keypress", function (eve
 function limpiarChat() {
     historialConversacion = [];
     const chatBox = document.getElementById("chat-messages");
+    const ambito = usuarioActual?.rol === "admin"
+        ? "todos los departamentos de <strong>Victory Logistic</strong>"
+        : `el departamento de <strong>${usuarioActual?.departamento || ""}</strong> de <strong>Victory Logistic</strong>`;
+
     chatBox.innerHTML = `
         <div class="message bot">
-            <div class="msg-content">Conversación reiniciada. ¿En qué puedo asistir al equipo de <strong>Victory Logistic</strong>?</div>
+            <div class="msg-content">Hola <strong>${usuarioActual?.nombre || ""}</strong>. Tienes acceso autorizado a la base de conocimiento de ${ambito}. ¿En qué puedo ayudarte hoy?</div>
         </div>
     `;
 }
@@ -80,8 +224,9 @@ async function enviarMensaje() {
     const inputField = document.getElementById("user-input");
     const sendBtn = document.getElementById("send-btn");
     const textoPregunta = inputField.value.trim();
+    const token = localStorage.getItem("vl_token");
 
-    if (!textoPregunta) return;
+    if (!textoPregunta || !token) return;
 
     inputField.disabled = true;
     sendBtn.disabled = true;
@@ -91,13 +236,21 @@ async function enviarMensaje() {
 
     const idCargando = await appendMessage("Consultando base de conocimiento de Victory Logistic...", "bot");
 
+    const filtroDepto = (usuarioActual?.rol === "admin")
+        ? document.getElementById("admin-dept-filter").value
+        : null;
+
     try {
         const response = await fetch(`${API_URL}/chat`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+            },
             body: JSON.stringify({
                 pregunta: textoPregunta,
-                historial: historialConversacion.slice(-4)
+                historial: historialConversacion.slice(-4),
+                filtro_departamento: filtroDepto
             })
         });
 
@@ -105,6 +258,11 @@ async function enviarMensaje() {
 
         const cargandoEl = document.getElementById(idCargando);
         if (cargandoEl) cargandoEl.remove();
+
+        if (response.status === 401) {
+            cerrarSesion();
+            return;
+        }
 
         if (!response.ok) {
             throw new Error(data.detail || `Error HTTP ${response.status}`);
@@ -145,14 +303,12 @@ async function appendMessage(texto, remitente, meta = {}) {
     let contenidoHtml = "";
 
     if (remitente === "bot" && typeof marked !== "undefined") {
-        // Extraer bloques ```chart ... ``` antes de parsear Markdown
         let textoProcesado = texto.replace(/```chart\s*([\s\S]*?)```/gi, (_, jsonCode) => {
             const chartId = "chart-" + Math.random().toString(36).substring(2, 9);
             chartsPendientes.push({ id: chartId, code: jsonCode.trim() });
             return `<div class="chart-wrapper"><canvas id="${chartId}"></canvas></div>`;
         });
 
-        // Extraer bloques ```mermaid ... ```
         textoProcesado = textoProcesado.replace(/```mermaid\s*([\s\S]*?)```/gi, (_, mermaidCode) => {
             const mId = "mermaid-" + Math.random().toString(36).substring(2, 9);
             mermaidsPendientes.push({ id: mId, code: mermaidCode.trim() });
@@ -193,7 +349,6 @@ async function appendMessage(texto, remitente, meta = {}) {
     div.innerHTML = `<div class="msg-content">${contenidoHtml}${footerHtml}</div>`;
     chatBox.appendChild(div);
 
-    // Renderizar gráficos Chart.js si la IA generó alguno
     if (chartsPendientes.length > 0 && typeof Chart !== "undefined") {
         const esOscuro = document.documentElement.getAttribute("data-theme") === "dark";
         const colorTexto = esOscuro ? "#e2e8f0" : "#1e293b";
@@ -231,7 +386,6 @@ async function appendMessage(texto, remitente, meta = {}) {
         }
     }
 
-    // Renderizar diagramas Mermaid.js si la IA generó alguno
     if (mermaidsPendientes.length > 0 && typeof mermaid !== "undefined") {
         for (const item of mermaidsPendientes) {
             try {
@@ -251,6 +405,7 @@ async function appendMessage(texto, remitente, meta = {}) {
 }
 
 async function enviarFeedback(metricId, valor, btnElement) {
+    const token = localStorage.getItem("vl_token");
     const grupo = document.getElementById(`fb-group-${metricId}`);
     const botones = grupo.querySelectorAll("button");
     botones.forEach(b => b.disabled = true);
@@ -258,7 +413,10 @@ async function enviarFeedback(metricId, valor, btnElement) {
     try {
         const res = await fetch(`${API_URL}/feedback`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+            },
             body: JSON.stringify({ metric_id: metricId, feedback: valor })
         });
         if (res.ok) {
